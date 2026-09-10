@@ -1,52 +1,89 @@
 # StayWakeBlackScreen (Windows)
 
-Two small PowerShell tools that keep a Windows PC awake without letting the
-screen show anything — instead of turning the monitor off, they cover every
-screen with a real black window and keep telling Windows the display is
+Windows tools that keep a PC awake without letting the screen show
+anything — instead of turning the monitor off, they cover every screen
+with a real black window and keep telling Windows the display is
 "required" (on). This avoids the session-lock-on-wake behavior that a real
 monitor power-off can trigger (especially with "require sign-in on wake"
 enabled).
 
-Both are GUI-only tools: no console, no popups, nothing written to disk
-unless you explicitly ask for a log.
+Written in Go (`go/`), calling the relevant Win32 APIs directly
+(`golang.org/x/sys/windows`) — no .NET, no external GUI toolkit, no
+runtime dependency beyond what Windows itself ships. Each program is a
+single self-contained `.exe`.
 
-## Scripts
+## Programs
 
-### `StayWakeBlackScreen.ps1`
+### `StayWakeBlackScreen.exe`
 
 Blacks out every screen and blocks **all** keyboard and mouse input
 system-wide immediately when run. The only way out is the **Escape** key.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\StayWakeBlackScreen.ps1
-# Optional:
-powershell -ExecutionPolicy Bypass -File .\StayWakeBlackScreen.ps1 -HeartbeatSeconds 5 -EnableLogging
+```
+StayWakeBlackScreen.exe
+StayWakeBlackScreen.exe -heartbeat-seconds 5 -enable-logging
 ```
 
-### `StayWakeBlackScreenIdle.ps1`
+### `StayWakeBlackScreenIdle.exe`
 
-Runs quietly in the background — no black screen, no input blocking —
-preventing sleep/lock, until the PC has been genuinely idle (no real
-keyboard/mouse activity) for `-IdleMinutes` (default 5). At that point it
-blacks out and blocks input exactly like the script above. Pressing
-**Escape** dismisses the blackout and restores input, but the script keeps
-running and the idle countdown restarts — it will black out again after
-another idle period, indefinitely. It does not exit on its own; stop it via
-Task Manager, `Stop-Process`, or Ctrl+C in a visible console.
+Runs quietly in the background — no black screen, no input blocking, and
+a tray icon — preventing sleep/lock, until the PC has been genuinely idle
+(no real keyboard/mouse activity) for `-idle-minutes` (default 5). At that
+point it blacks out and blocks input exactly like the program above.
+Pressing **Escape** dismisses the blackout and restores input, but it
+keeps running and the idle countdown restarts — it will black out again
+after another idle period, indefinitely.
 
-```powershell
-powershell -STA -ExecutionPolicy Bypass -File .\StayWakeBlackScreenIdle.ps1
-# Optional:
-powershell -STA -ExecutionPolicy Bypass -File .\StayWakeBlackScreenIdle.ps1 -IdleMinutes 5 -HeartbeatSeconds 5 -EnableLogging
 ```
+StayWakeBlackScreenIdle.exe
+StayWakeBlackScreenIdle.exe -idle-minutes 5 -heartbeat-seconds 5 -enable-logging
+```
+
+**Tray icon:** a monitor glyph appears in the notification area —
+**black** while actively guarding, **white** while disabled.
+- **Left-click** toggles it on/off.
+- **Right-click** opens a menu: Enable, Disable, Exit.
+
+Disabling immediately restores input (if blacked out) and lets Windows
+sleep/lock normally again, without stopping the process — re-enable any
+time from the same menu. Exit stops it for good.
+
+This program does not exit on its own otherwise. To stop it: the tray
+menu's *Exit*, Task Manager/`taskkill`, or the installer (which does this
+automatically when updating).
+
+### `StayWakeInstall.exe`
+
+Downloads the latest released `StayWakeBlackScreenIdle.exe`, installs it
+to `%LOCALAPPDATA%\StayWakeBlackScreen\`, registers it to autostart at
+login, and (re)starts it — stopping any already-running copy first so the
+file can be replaced.
+
+```
+StayWakeInstall.exe
+```
+
+Safe to re-run any time to update: it always ends up with exactly **one**
+autostart entry (a single named registry value — re-running never creates
+a duplicate) and exactly **one** running instance:
+- The installer terminates any already-running copy before replacing the
+  file and starting the new one.
+- `StayWakeBlackScreenIdle.exe` also refuses to start a second copy of
+  itself, via a named mutex — belt and suspenders even if it's ever
+  launched some other way while already running.
+
+Flags: `-install-dir <path>` (override the install location),
+`-github-token <token>` (avoid GitHub's unauthenticated API rate limit),
+`-no-launch` (install/update without starting it now), `-no-autostart`
+(skip the registry entry).
 
 ## How it works
 
 - `SetThreadExecutionState` with `ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED`
   tells Windows sleep and display-off must not happen.
-- A borderless, topmost, black `Form` is created per monitor (via
-  `Screen.AllScreens`) instead of powering the display off, so Windows never
-  sees a display-off/idle transition and has no reason to lock the session.
+- A borderless, topmost, black window is created per monitor instead of
+  powering the display off, so Windows never sees a display-off/idle
+  transition and has no reason to lock the session.
 - Low-level `WH_KEYBOARD_LL` / `WH_MOUSE_LL` hooks swallow all keyboard and
   mouse input system-wide while blacked out — nothing reaches any window,
   including the tool's own. Only Escape is detected (via the hook) to end
@@ -57,39 +94,55 @@ powershell -STA -ExecutionPolicy Bypass -File .\StayWakeBlackScreenIdle.ps1 -Idl
   updates, and the final state is cleaned up on exit.
 - **Ctrl+Alt+Del always remains available** — Windows never lets any hook
   suppress it — so it's a hard escape hatch no matter what else goes wrong.
+- The tray icon is drawn at runtime (no image assets) as a 32×32
+  alpha-blended `HICON` via `CreateDIBSection`/`CreateIconIndirect`.
 
 ## Logging
 
-Off by default (nothing is written, no output, no popups). Pass
-`-EnableLogging` to write diagnostics to a `.log` file next to the
-script/exe, for troubleshooting only.
+Off by default (nothing is written, no console output, no popups). Pass
+`-enable-logging` to write diagnostics to a `.log` file next to the exe,
+for troubleshooting only.
 
-## Building the .exe
+## Building from source
 
-Both scripts use Windows Forms, which requires the STA apartment. A plain
-`powershell.exe` console is STA by default, but a `ps2exe`-compiled exe is
-**not** unless told to be — always compile with `-STA`:
+Requires Go 1.22+.
 
-```powershell
-Install-Module -Name ps2exe -Scope CurrentUser
-Invoke-ps2exe -inputFile StayWakeBlackScreen.ps1 -outputFile StayWakeBlackScreen.exe -STA -noConsole
-Invoke-ps2exe -inputFile StayWakeBlackScreenIdle.ps1 -outputFile StayWakeBlackScreenIdle.exe -STA -noConsole
+```
+cd go
+GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
+GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
+GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o StayWakeInstall.exe ./cmd/stay-wake-install
 ```
 
-`-noConsole` is optional but fits these being GUI-only tools.
+`-H=windowsgui` is what makes the two blackout programs run without a
+console window; the installer is left as a normal console program so its
+progress is visible when run from a terminal.
+
+Package layout:
+
+```
+go/
+  internal/blackout/       Win32 bindings: sleep/display block, input
+                            hooks, overlay windows, DPI, idle detection
+  internal/tray/            Notification-area icon, menu, drawn icon
+  internal/singleinstance/  Named-mutex single-instance guard
+  cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
+  cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
+  cmd/stay-wake-install/       StayWakeInstall.exe
+```
 
 ## Prebuilt releases
 
-The GitHub Actions workflow in this repo (`.github/workflows/build.yml`)
-builds both `.exe` files on `windows-latest` with `ps2exe` on every push to
-`main` and on every `v*` tag, and attaches them to a
-[GitHub Release](../../releases) for tagged pushes. Grab the latest exe
-from the [Releases](../../releases) page rather than building it yourself.
+The GitHub Actions workflow (`.github/workflows/build.yml`) cross-compiles
+all three `.exe` files on every push to `main` and on every `v*` tag, and
+attaches them to a [GitHub Release](../../releases) for tagged pushes. Grab
+the latest from the [Releases](../../releases) page, or just run
+`StayWakeInstall.exe` to fetch and install `StayWakeBlackScreenIdle.exe`
+automatically.
 
 ## Requirements
 
-- Windows (Windows Forms + Win32 hooks are Windows-only)
-- PowerShell 5.1+ (Windows PowerShell or PowerShell 7+)
+- Windows (Windows Forms-equivalent GUI + Win32 hooks are Windows-only)
 
 ## Safety notes
 
