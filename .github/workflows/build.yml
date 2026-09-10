@@ -1,0 +1,50 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ps2exe
+        shell: pwsh
+        run: Install-Module -Name ps2exe -Force -Scope CurrentUser
+
+      - name: Build StayWakeBlackScreen.exe
+        shell: pwsh
+        run: |
+          Invoke-ps2exe -inputFile StayWakeBlackScreen.ps1 -outputFile StayWakeBlackScreen.exe -STA -noConsole
+
+      - name: Build StayWakeBlackScreenIdle.exe
+        shell: pwsh
+        run: |
+          Invoke-ps2exe -inputFile StayWakeBlackScreenIdle.ps1 -outputFile StayWakeBlackScreenIdle.exe -STA -noConsole
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: StayWakeBlackScreen-exe
+          path: |
+            StayWakeBlackScreen.exe
+            StayWakeBlackScreenIdle.exe
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            StayWakeBlackScreen.exe
+            StayWakeBlackScreenIdle.exe
+          generate_release_notes: true
