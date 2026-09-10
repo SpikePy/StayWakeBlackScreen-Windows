@@ -77,6 +77,23 @@ Flags: `-install-dir <path>` (override the install location),
 `-no-launch` (install/update without starting it now), `-no-autostart`
 (skip the registry entry).
 
+### `install.ps1`
+
+A PowerShell equivalent of `StayWakeInstall.exe`, for bootstrapping
+without first having to manually download an exe from the Releases page —
+PowerShell itself is all that's needed:
+
+```powershell
+irm https://raw.githubusercontent.com/SpikePy/StayWakeBlackScreen-Windows/main/install.ps1 | iex
+```
+
+Same behavior and the same duplicate/running-instance safeguards as
+`StayWakeInstall.exe` above (it stops any already-running copy, matched by
+its full install path, before replacing the file and restarting it; the
+registered autostart entry is a single named registry value, so re-running
+never creates a duplicate). Same flags too, in PowerShell form:
+`-InstallDir <path>`, `-GitHubToken <token>`, `-NoLaunch`, `-NoAutostart`.
+
 ## How it works
 
 - `SetThreadExecutionState` with `ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED`
