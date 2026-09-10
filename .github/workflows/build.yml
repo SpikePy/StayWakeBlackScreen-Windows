@@ -25,9 +25,16 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
 
       - name: Vet
-        run: go vet ./...
+        # -unsafeptr=false: this package's unsafe.Pointer conversions of
+        # LPARAM/DIB-section addresses supplied by Win32 (hook callbacks,
+        # CreateDIBSection's output buffer) are outside anything the Go
+        # object graph tracks, which is inherent to raw Win32 interop, not
+        # a bug - vet's static heuristic can't tell that apart from a real
+        # misuse.
+        run: go vet -unsafeptr=false ./...
         env:
           GOOS: windows
           GOARCH: amd64
