@@ -79,6 +79,21 @@ Flags: `-install-dir <path>` (override the install location),
 (`StayWakeBlackScreenIdle.exe`) — `StayWakeBlackScreen.exe` is left as a
 manual, run-when-you-want-it tool.
 
+### `StayWakeUninstall.exe`
+
+Reverses what `StayWakeInstall.exe` did: removes the autostart registry
+entry, stops any running copy of `StayWakeBlackScreenIdle.exe` or
+`StayWakeBlackScreen.exe`, and deletes the installed files.
+
+```
+StayWakeUninstall.exe
+```
+
+Flags: `-install-dir <path>` (override the install location, same default
+as the installer: `%LOCALAPPDATA%\StayWakeBlackScreen`), `-keep-files`
+(remove autostart and stop the process, but leave the installed files in
+place).
+
 ## How it works
 
 - `SetThreadExecutionState` with `ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED`
@@ -114,11 +129,12 @@ cd go
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o StayWakeInstall.exe ./cmd/stay-wake-install
+GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o StayWakeUninstall.exe ./cmd/stay-wake-uninstall
 ```
 
 `-H=windowsgui` is what makes the two blackout programs run without a
-console window; the installer is left as a normal console program so its
-progress is visible when run from a terminal.
+console window; the installer and uninstaller are left as normal console
+programs so their progress is visible when run from a terminal.
 
 Package layout:
 
@@ -131,6 +147,7 @@ go/
   cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
   cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
   cmd/stay-wake-install/       StayWakeInstall.exe
+  cmd/stay-wake-uninstall/     StayWakeUninstall.exe
 ```
 
 ## Prebuilt releases
