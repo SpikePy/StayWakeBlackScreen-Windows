@@ -46,25 +46,36 @@ const iconSize = 32
 // pixel is BGRA order (what a 32bpp Windows DIB section expects).
 type pixel struct{ B, G, R, A byte }
 
-// monitorGlyph reports whether (x, y) on a 32x32 canvas is part of the
-// monitor silhouette: a screen rectangle on a small stand and base.
-func monitorGlyph(x, y int) bool {
+// monitorPart identifies which part of the monitor silhouette a pixel
+// belongs to, so screen and stand/base can be colored independently.
+type monitorPart int
+
+const (
+	partNone monitorPart = iota
+	partScreen
+	partStand
+)
+
+// monitorGlyph reports which part of the monitor silhouette (x, y) on a
+// 32x32 canvas belongs to: a screen rectangle on a small stand and base.
+func monitorGlyph(x, y int) monitorPart {
 	switch {
 	case x >= 3 && x <= 28 && y >= 4 && y <= 20:
-		return true // screen
+		return partScreen
 	case x >= 14 && x <= 17 && y >= 21 && y <= 24:
-		return true // stand
+		return partStand // stand
 	case x >= 9 && x <= 22 && y >= 25 && y <= 26:
-		return true // base
+		return partStand // base
 	default:
-		return false
+		return partNone
 	}
 }
 
 // buildMonitorIcon renders a simple flat monitor glyph as an alpha-blended
-// HICON: solid fillColor for enabled=true (black, "actively guarding"),
-// or a light outline over transparency for enabled=false (white/hollow,
-// "disabled") so it still reads against a light taskbar.
+// HICON: solid black for enabled=true (guard active - screen "on"), or the
+// same black stand/base with a white screen for enabled=false (guard
+// disabled - screen "off"), which stays visible against both light and
+// dark taskbars.
 func buildMonitorIcon(enabled bool) (uintptr, error) {
 	var bi bitmapInfoHeader
 	bi.biSize = uint32(unsafe.Sizeof(bi))
@@ -81,15 +92,19 @@ func buildMonitorIcon(enabled bool) (uintptr, error) {
 	}
 	pixels := unsafe.Slice((*pixel)(unsafe.Pointer(bitsPtr)), iconSize*iconSize)
 
-	fill := pixel{B: 0, G: 0, R: 0, A: 255}          // black, active
-	outline := pixel{B: 255, G: 255, R: 255, A: 255} // white, disabled
+	black := pixel{B: 0, G: 0, R: 0, A: 255}
+	white := pixel{B: 255, G: 255, R: 255, A: 255}
+	screenFill := black // enabled: screen "on"
 	if !enabled {
-		fill = outline
+		screenFill = white // disabled: screen "off"
 	}
 	for y := 0; y < iconSize; y++ {
 		for x := 0; x < iconSize; x++ {
-			if monitorGlyph(x, y) {
-				pixels[y*iconSize+x] = fill
+			switch monitorGlyph(x, y) {
+			case partScreen:
+				pixels[y*iconSize+x] = screenFill
+			case partStand:
+				pixels[y*iconSize+x] = black
 			}
 		}
 	}
@@ -117,10 +132,10 @@ func buildMonitorIcon(enabled bool) (uintptr, error) {
 	return hIcon, nil
 }
 
-// EnabledIcon returns a black monitor icon HICON (guard active).
+// EnabledIcon returns a monitor icon HICON with a black screen (guard active).
 func EnabledIcon() (uintptr, error) { return buildMonitorIcon(true) }
 
-// DisabledIcon returns a white monitor icon HICON (guard disabled).
+// DisabledIcon returns a monitor icon HICON with a white screen (guard disabled).
 func DisabledIcon() (uintptr, error) { return buildMonitorIcon(false) }
 
 // DestroyIconHandle frees an HICON returned by EnabledIcon/DisabledIcon.
