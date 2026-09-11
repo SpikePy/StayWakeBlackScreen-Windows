@@ -39,9 +39,9 @@ StayWakeBlackScreenIdle.exe
 StayWakeBlackScreenIdle.exe -idle-minutes 5 -heartbeat-seconds 5 -enable-logging
 ```
 
-**Tray icon:** a monitor glyph appears in the notification area, with a
-**black screen** while actively guarding and a **white screen** while
-disabled.
+**Tray icon:** a monitor glyph (black frame and stand) appears in the
+notification area, with a **black screen** while actively guarding and a
+**light grey screen** while disabled.
 - **Left-click** toggles it on/off.
 - **Right-click** opens a menu: Enable, Disable, Exit.
 
