@@ -7,7 +7,7 @@ with a real black window and keep telling Windows the display is
 monitor power-off can trigger (especially with "require sign-in on wake"
 enabled).
 
-Written in Go (`go/`), calling the relevant Win32 APIs directly
+Written in Go, calling the relevant Win32 APIs directly
 (`golang.org/x/sys/windows`) — no .NET, no external GUI toolkit, no
 runtime dependency beyond what Windows itself ships. Each program is a
 single self-contained `.exe`.
@@ -126,7 +126,6 @@ for troubleshooting only.
 Requires Go 1.22+.
 
 ```
-cd go
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o StayWakeInstall.exe ./cmd/stay-wake-install
@@ -140,15 +139,14 @@ programs so their progress is visible when run from a terminal.
 Package layout:
 
 ```
-go/
-  internal/blackout/       Win32 bindings: sleep/display block, input
-                            hooks, overlay windows, DPI, idle detection
-  internal/tray/            Notification-area icon, menu, drawn icon
-  internal/singleinstance/  Named-mutex single-instance guard
-  cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
-  cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
-  cmd/stay-wake-install/       StayWakeInstall.exe
-  cmd/stay-wake-uninstall/     StayWakeUninstall.exe
+internal/blackout/       Win32 bindings: sleep/display block, input
+                          hooks, overlay windows, DPI, idle detection
+internal/tray/            Notification-area icon, menu, drawn icon
+internal/singleinstance/  Named-mutex single-instance guard
+cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
+cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
+cmd/stay-wake-install/       StayWakeInstall.exe
+cmd/stay-wake-uninstall/     StayWakeUninstall.exe
 ```
 
 ## Prebuilt releases
