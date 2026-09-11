@@ -3,14 +3,14 @@
 // Command staywakeblackscreenidle is a background idle guard - unlike
 // staywakeblackscreen, it does NOT block input or show the black screen
 // immediately. It just prevents the PC from sleeping/locking and keeps
-// running in the background. Only after -idle-minutes (default 5) of no
+// running in the background. Only after -idle-minutes (default 3) of no
 // real keyboard/mouse activity does it show the black screen and block all
 // input, exactly like staywakeblackscreen. Pressing Escape then dismisses
 // the black screen and restores input, but the program itself keeps
 // running - the idle countdown simply restarts, and it will black out
 // again after another -idle-minutes of inactivity, repeating indefinitely.
 //
-// A tray icon (black monitor = guarding, white monitor = disabled) lets
+// A tray icon (black screen = guarding, light grey screen = disabled) lets
 // the user pause/resume without stopping the process: left-click toggles
 // it, right-click opens an Enable/Disable/Exit menu.
 //
@@ -52,7 +52,7 @@ const (
 func main() {
 	runtime.LockOSThread()
 
-	idleMinutes := flag.Int("idle-minutes", 5, "minutes of inactivity before blacking out")
+	idleMinutes := flag.Int("idle-minutes", 3, "minutes of inactivity before blacking out")
 	heartbeatSeconds := flag.Int("heartbeat-seconds", 5, "seconds between Caps Lock activity heartbeats while blacked out")
 	pollMs := flag.Int("poll-ms", 250, "milliseconds between idle/escape polls")
 	enableLogging := flag.Bool("enable-logging", false, "write diagnostics to StayWakeBlackScreenIdle.log next to the exe")

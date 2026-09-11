@@ -28,7 +28,7 @@ StayWakeBlackScreen.exe -heartbeat-seconds 5 -enable-logging
 
 Runs quietly in the background — no black screen, no input blocking, and
 a tray icon — preventing sleep/lock, until the PC has been genuinely idle
-(no real keyboard/mouse activity) for `-idle-minutes` (default 5). At that
+(no real keyboard/mouse activity) for `-idle-minutes` (default 3). At that
 point it blacks out and blocks input exactly like the program above.
 Pressing **Escape** dismisses the blackout and restores input, but it
 keeps running and the idle countdown restarts — it will black out again
@@ -36,7 +36,7 @@ after another idle period, indefinitely.
 
 ```
 StayWakeBlackScreenIdle.exe
-StayWakeBlackScreenIdle.exe -idle-minutes 5 -heartbeat-seconds 5 -enable-logging
+StayWakeBlackScreenIdle.exe -idle-minutes 3 -heartbeat-seconds 5 -enable-logging
 ```
 
 **Tray icon:** a monitor glyph (black frame and stand) appears in the
