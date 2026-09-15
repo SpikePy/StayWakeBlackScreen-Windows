@@ -175,17 +175,19 @@ shows `dev`.
 console window; the setup tool is left as a normal console program so
 its progress (and menu) is visible when run from a terminal.
 
-`StayWakeBlackScreen.exe` and `StayWakeBlackScreenIdle.exe` also carry
-the same monitor glyph as their tray/Explorer file icon, embedded via a
-`rsrc_windows_amd64.syso` resource file already committed in each of
-their `cmd/` directories - `go build` picks these up automatically, no
-extra step needed. If the glyph in `internal/monitoricon` ever changes,
-regenerate them with:
+All three `.exe` files also carry the same monitor glyph as their
+Explorer/taskbar file icon (the same one `StayWakeBlackScreenIdle.exe`
+draws at runtime for its tray icon), embedded via a
+`rsrc_windows_amd64.syso` resource file already committed in each `cmd/`
+directory - `go build` picks these up automatically, no extra step
+needed. If the glyph in `internal/monitoricon` ever changes, regenerate
+them with:
 
 ```
 go run ./tools/genicon monitor.ico
 go run github.com/akavel/rsrc@latest -ico monitor.ico -arch amd64 -o cmd/staywakeblackscreen/rsrc_windows_amd64.syso
 go run github.com/akavel/rsrc@latest -ico monitor.ico -arch amd64 -o cmd/staywakeblackscreenidle/rsrc_windows_amd64.syso
+go run github.com/akavel/rsrc@latest -ico monitor.ico -arch amd64 -o cmd/stay-wake-setup/rsrc_windows_amd64.syso
 ```
 
 Package layout:
