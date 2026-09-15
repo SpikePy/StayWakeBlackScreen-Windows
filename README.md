@@ -78,47 +78,50 @@ This program does not exit on its own otherwise. To stop it: the tray
 menu's *Exit*, Task Manager/`taskkill`, or the installer (which does this
 automatically when updating).
 
-### `Install_StayWake.exe`
+### `Setup_StayWake.exe`
 
-Downloads the latest released `StayWakeBlackScreenIdle.exe`, installs it
-to `%LOCALAPPDATA%\StayWakeBlackScreen\`, registers it to autostart at
+Run it with no arguments (e.g. double-click it) and it shows an
+interactive menu:
+
+```
+Windows StayWakeBlackScreen - Setup
+
+  1) Install / update
+  2) Uninstall
+  3) Exit
+
+Choose an option [1-3]:
+```
+
+**Install / update** downloads the latest released
+`StayWakeBlackScreenIdle.exe`, installs it to
+`%LOCALAPPDATA%\StayWakeBlackScreen\`, registers it to autostart at
 login, and (re)starts it — stopping any already-running copy first so the
-file can be replaced.
-
-```
-Install_StayWake.exe
-```
-
-Safe to re-run any time to update: it always ends up with exactly **one**
-autostart entry (a single named registry value — re-running never creates
-a duplicate) and exactly **one** running instance:
-- The installer terminates any already-running copy before replacing the
-  file and starting the new one.
+file can be replaced. Safe to re-run any time to update: it always ends
+up with exactly **one** autostart entry (a single named registry value —
+re-running never creates a duplicate) and exactly **one** running
+instance:
+- Setup terminates any already-running copy before replacing the file
+  and starting the new one.
 - `StayWakeBlackScreenIdle.exe` also refuses to start a second copy of
   itself, via a named mutex — belt and suspenders even if it's ever
   launched some other way while already running.
 
-Flags: `-install-dir <path>` (override the install location),
-`-github-token <token>` (avoid GitHub's unauthenticated API rate limit),
-`-no-launch` (install/update without starting it now), `-no-autostart`
-(skip the registry entry). It only ever downloads the idle variant
-(`StayWakeBlackScreenIdle.exe`) — `StayWakeBlackScreen.exe` is left as a
-manual, run-when-you-want-it tool.
+It only ever downloads the idle variant (`StayWakeBlackScreenIdle.exe`)
+— `StayWakeBlackScreen.exe` is left as a manual, run-when-you-want-it
+tool.
 
-### `Uninstall_StayWake.exe`
+**Uninstall** removes the autostart registry entry, stops any running
+copy of `StayWakeBlackScreenIdle.exe` or `StayWakeBlackScreen.exe`, and
+deletes the installed files.
 
-Reverses what `Install_StayWake.exe` did: removes the autostart registry
-entry, stops any running copy of `StayWakeBlackScreenIdle.exe` or
-`StayWakeBlackScreen.exe`, and deletes the installed files.
-
-```
-Uninstall_StayWake.exe
-```
-
-Flags: `-install-dir <path>` (override the install location, same default
-as the installer: `%LOCALAPPDATA%\StayWakeBlackScreen`), `-keep-files`
-(remove autostart and stop the process, but leave the installed files in
-place).
+For scripted use, `-mode install` or `-mode uninstall` skips the menu
+entirely. Other flags: `-install-dir <path>` (override the install
+location), `-github-token <token>` (avoid GitHub's unauthenticated API
+rate limit, install only), `-no-launch` (install/update without starting
+it now, install only), `-no-autostart` (skip the registry entry, install
+only), `-keep-files` (remove autostart and stop the process, but leave
+the installed files in place, uninstall only).
 
 ## How it works
 
@@ -153,8 +156,7 @@ Requires Go 1.26+ (matching the `go` directive in `go.mod`).
 ```
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
-GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Install_StayWake.exe ./cmd/stay-wake-install
-GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Uninstall_StayWake.exe ./cmd/stay-wake-uninstall
+GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Setup_StayWake.exe ./cmd/stay-wake-setup
 ```
 
 `StayWakeBlackScreenIdle.exe`'s tray tooltip shows a version string,
@@ -163,8 +165,8 @@ release build does this from the pushed tag); a build without it just
 shows `dev`.
 
 `-H=windowsgui` is what makes the two blackout programs run without a
-console window; the installer and uninstaller are left as normal console
-programs so their progress is visible when run from a terminal.
+console window; the setup tool is left as a normal console program so
+its progress (and menu) is visible when run from a terminal.
 
 Package layout:
 
@@ -173,20 +175,20 @@ internal/blackout/       Win32 bindings: sleep/display block, input
                           hooks, overlay windows, DPI, idle detection
 internal/tray/            Notification-area icon, menu, drawn icon
 internal/singleinstance/  Named-mutex single-instance guard
+internal/setup/           Install/uninstall logic shared by Setup_StayWake.exe
 cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
 cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
-cmd/stay-wake-install/       Install_StayWake.exe
-cmd/stay-wake-uninstall/     Uninstall_StayWake.exe
+cmd/stay-wake-setup/         Setup_StayWake.exe
 ```
 
 ## Prebuilt releases
 
 The GitHub Actions workflow (`.github/workflows/build.yml`) cross-compiles
-all four `.exe` files and publishes them to a [GitHub Release](../../releases)
+all three `.exe` files and publishes them to a [GitHub Release](../../releases)
 whenever a `v*` tag is pushed (or the workflow is triggered manually). Grab
 the latest from the [Releases](../../releases) page, or just run
-`Install_StayWake.exe` to fetch and install `StayWakeBlackScreenIdle.exe`
-automatically.
+`Setup_StayWake.exe` and choose "Install / update" to fetch and install
+`StayWakeBlackScreenIdle.exe` automatically.
 
 ## Requirements
 
