@@ -157,6 +157,11 @@ GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Install_StayWake.exe ./cm
 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Uninstall_StayWake.exe ./cmd/stay-wake-uninstall
 ```
 
+`StayWakeBlackScreenIdle.exe`'s tray tooltip shows a version string,
+stamped in via `-X main.version=v1.2.3` appended to its `-ldflags` (the
+release build does this from the pushed tag); a build without it just
+shows `dev`.
+
 `-H=windowsgui` is what makes the two blackout programs run without a
 console window; the installer and uninstaller are left as normal console
 programs so their progress is visible when run from a terminal.

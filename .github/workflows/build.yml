@@ -41,7 +41,7 @@ jobs:
           CGO_ENABLED: 0
 
       - name: Build StayWakeBlackScreenIdle.exe
-        run: go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
+        run: go build -ldflags "-H=windowsgui -s -w -X main.version=${{ github.ref_name }}" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
         env:
           GOOS: windows
           GOARCH: amd64

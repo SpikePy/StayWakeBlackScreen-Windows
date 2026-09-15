@@ -48,6 +48,10 @@ import (
 	"stay-wake-black-screen/internal/tray"
 )
 
+// version is stamped in at build time via -ldflags "-X main.version=...";
+// left as "dev" for local/manual builds.
+var version = "dev"
+
 const (
 	menuIDEnable    = 1
 	menuIDDisable   = 2
@@ -231,9 +235,9 @@ func main() {
 			logf("EXCEPTION building tray icon: %v", err)
 			return
 		}
-		tooltip := "StayWakeBlackScreenIdle - guarding"
+		tooltip := fmt.Sprintf("StayWakeBlackScreenIdle %s - guarding", version)
 		if !enabled {
-			tooltip = "StayWakeBlackScreenIdle - disabled"
+			tooltip = fmt.Sprintf("StayWakeBlackScreenIdle %s - disabled", version)
 		}
 		if trayIcon == 0 {
 			if err := tray.AddIcon(trayHwnd, newIcon, tooltip); err != nil {
