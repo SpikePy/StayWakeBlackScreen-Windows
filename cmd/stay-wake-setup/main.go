@@ -2,9 +2,9 @@
 
 // Command stay-wake-setup is the single entry point for installing,
 // updating, and uninstalling StayWakeBlackScreenIdle.exe. Run it with no
-// arguments (e.g. by double-clicking Setup_StayWake.exe) and it shows an
-// interactive menu to choose "Install / update" or "Uninstall". Pass
-// -mode to skip the prompt for scripted use.
+// arguments (e.g. by double-clicking Setup_StayWakeBlackScreenIdle.exe)
+// and it shows an interactive menu to choose "Install / update" or
+// "Uninstall". Pass -mode to skip the prompt for scripted use.
 package main
 
 import (

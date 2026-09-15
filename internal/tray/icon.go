@@ -77,9 +77,10 @@ func monitorGlyph(x, y int) monitorPart {
 }
 
 // buildMonitorIcon renders a simple flat monitor glyph as an alpha-blended
-// HICON: a black frame and stand/base always, with a black screen interior
-// for enabled=true (guard active - screen "on") or a light grey screen
-// interior for enabled=false (guard disabled - screen "off"), so it stays
+// HICON: a black frame, screen interior, and stand/base for enabled=true
+// (guard active). For enabled=false (guard disabled), the exact same
+// glyph is rendered grey instead of black and a diagonal red strike is
+// drawn across it - the conventional "disabled" cue - so it stays
 // clearly recognizable and visible against both light and dark taskbars.
 func buildMonitorIcon(enabled bool) (uintptr, error) {
 	var bi bitmapInfoHeader
@@ -98,18 +99,31 @@ func buildMonitorIcon(enabled bool) (uintptr, error) {
 	pixels := unsafe.Slice((*pixel)(unsafe.Pointer(bitsPtr)), iconSize*iconSize)
 
 	black := pixel{B: 0, G: 0, R: 0, A: 255}
-	lightGrey := pixel{B: 211, G: 211, R: 211, A: 255}
-	interiorFill := black // enabled: screen "on"
-	if !enabled {
-		interiorFill = lightGrey // disabled: screen "off"
-	}
 	for y := 0; y < iconSize; y++ {
 		for x := 0; x < iconSize; x++ {
 			switch monitorGlyph(x, y) {
-			case partScreenInterior:
-				pixels[y*iconSize+x] = interiorFill
-			case partFrame, partStand:
+			case partScreenInterior, partFrame, partStand:
 				pixels[y*iconSize+x] = black
+			}
+		}
+	}
+
+	if !enabled {
+		grey := pixel{B: 140, G: 140, R: 140, A: 255}
+		for i := range pixels {
+			if pixels[i].A != 0 {
+				pixels[i] = grey
+			}
+		}
+		// Diagonal "disabled" strike, top-left to bottom-right, spanning
+		// the whole canvas (including the transparent background) so
+		// it's unambiguous at tray size regardless of glyph shape.
+		strikeRed := pixel{B: 30, G: 30, R: 200, A: 255}
+		for y := 0; y < iconSize; y++ {
+			for x := 0; x < iconSize; x++ {
+				if d := x - y; d >= -2 && d <= 2 {
+					pixels[y*iconSize+x] = strikeRed
+				}
 			}
 		}
 	}
@@ -140,8 +154,8 @@ func buildMonitorIcon(enabled bool) (uintptr, error) {
 // EnabledIcon returns a monitor icon HICON with a black screen (guard active).
 func EnabledIcon() (uintptr, error) { return buildMonitorIcon(true) }
 
-// DisabledIcon returns a monitor icon HICON with a light grey screen inside
-// the black frame (guard disabled).
+// DisabledIcon returns the same monitor icon as EnabledIcon, greyed out
+// with a diagonal red strike across it (guard disabled).
 func DisabledIcon() (uintptr, error) { return buildMonitorIcon(false) }
 
 // DestroyIconHandle frees an HICON returned by EnabledIcon/DisabledIcon.

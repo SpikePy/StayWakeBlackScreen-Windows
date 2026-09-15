@@ -61,9 +61,9 @@ matching command-line flag (`-idle-minutes`, `-heartbeat-seconds`,
 `-poll-ms`, `-start-enabled`) which, if passed, overrides the config file
 for that run only.
 
-**Tray icon:** a monitor glyph (black frame and stand) appears in the
-notification area, with a **black screen** while actively guarding and a
-**light grey screen** while disabled.
+**Tray icon:** a monitor glyph (black frame, screen, and stand) appears in
+the notification area while actively guarding, and the same glyph **greyed
+out with a diagonal red strike** through it while disabled.
 - **Left-click** toggles it on/off.
 - **Right-click** opens a menu: Enable, Disable, Configure, Exit.
 
@@ -78,7 +78,7 @@ This program does not exit on its own otherwise. To stop it: the tray
 menu's *Exit*, Task Manager/`taskkill`, or the installer (which does this
 automatically when updating).
 
-### `Setup_StayWake.exe`
+### `Setup_StayWakeBlackScreenIdle.exe`
 
 Run it with no arguments (e.g. double-click it) and it shows an
 interactive menu:
@@ -156,7 +156,7 @@ Requires Go 1.26+ (matching the `go` directive in `go.mod`).
 ```
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
-GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Setup_StayWake.exe ./cmd/stay-wake-setup
+GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Setup_StayWakeBlackScreenIdle.exe ./cmd/stay-wake-setup
 ```
 
 `StayWakeBlackScreenIdle.exe`'s tray tooltip shows a version string,
@@ -175,10 +175,10 @@ internal/blackout/       Win32 bindings: sleep/display block, input
                           hooks, overlay windows, DPI, idle detection
 internal/tray/            Notification-area icon, menu, drawn icon
 internal/singleinstance/  Named-mutex single-instance guard
-internal/setup/           Install/uninstall logic shared by Setup_StayWake.exe
+internal/setup/           Install/uninstall logic shared by Setup_StayWakeBlackScreenIdle.exe
 cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
 cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
-cmd/stay-wake-setup/         Setup_StayWake.exe
+cmd/stay-wake-setup/         Setup_StayWakeBlackScreenIdle.exe
 ```
 
 ## Prebuilt releases
@@ -187,7 +187,7 @@ The GitHub Actions workflow (`.github/workflows/build.yml`) cross-compiles
 all three `.exe` files and publishes them to a [GitHub Release](../../releases)
 whenever a `v*` tag is pushed (or the workflow is triggered manually). Grab
 the latest from the [Releases](../../releases) page, or just run
-`Setup_StayWake.exe` and choose "Install / update" to fetch and install
+`Setup_StayWakeBlackScreenIdle.exe` and choose "Install / update" to fetch and install
 `StayWakeBlackScreenIdle.exe` automatically.
 
 ## Requirements

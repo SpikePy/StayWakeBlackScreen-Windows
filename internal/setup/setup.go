@@ -1,9 +1,10 @@
 //go:build windows
 
 // Package setup implements the install and uninstall actions shared by
-// Setup_StayWake.exe: downloading and registering StayWakeBlackScreenIdle.exe
-// for autostart, and reversing that - removing the autostart entry, stopping
-// any running copy, and deleting the installed files.
+// Setup_StayWakeBlackScreenIdle.exe: downloading and registering
+// StayWakeBlackScreenIdle.exe for autostart, and reversing that -
+// removing the autostart entry, stopping any running copy, and deleting
+// the installed files.
 package setup
 
 import (

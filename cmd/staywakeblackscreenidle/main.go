@@ -12,11 +12,11 @@
 // and it will black out again after another idle_minutes of inactivity,
 // repeating indefinitely.
 //
-// A tray icon (black screen = guarding, light grey screen = disabled) lets
-// the user pause/resume without stopping the process: left-click toggles
-// it, right-click opens an Enable/Disable/Configure/Exit menu. Configure
-// opens config.yaml in whatever application Windows has associated with
-// .yaml files.
+// A tray icon (monitor glyph = guarding, same glyph greyed out with a
+// diagonal red strike = disabled) lets the user pause/resume without
+// stopping the process: left-click toggles it, right-click opens an
+// Enable/Disable/Configure/Exit menu. Configure opens config.yaml in
+// whatever application Windows has associated with .yaml files.
 //
 // This program does not exit on its own otherwise. To stop it: the tray
 // menu's Exit, Task Manager, taskkill, or the installer (which does this
