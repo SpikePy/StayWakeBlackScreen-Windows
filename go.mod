@@ -1,4 +1,4 @@
-module stay-wake-black-screen
+module windows-stay-wake-black-screen
 
 go 1.26.7
 

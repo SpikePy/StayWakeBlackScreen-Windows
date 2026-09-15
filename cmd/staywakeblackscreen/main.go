@@ -33,8 +33,8 @@ import (
 	"runtime"
 	"time"
 
-	"stay-wake-black-screen/internal/blackout"
-	"stay-wake-black-screen/internal/singleinstance"
+	"windows-stay-wake-black-screen/internal/blackout"
+	"windows-stay-wake-black-screen/internal/singleinstance"
 )
 
 func main() {

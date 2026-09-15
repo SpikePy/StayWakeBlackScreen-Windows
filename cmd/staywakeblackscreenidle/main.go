@@ -42,10 +42,10 @@ import (
 	"runtime"
 	"time"
 
-	"stay-wake-black-screen/internal/blackout"
-	"stay-wake-black-screen/internal/config"
-	"stay-wake-black-screen/internal/singleinstance"
-	"stay-wake-black-screen/internal/tray"
+	"windows-stay-wake-black-screen/internal/blackout"
+	"windows-stay-wake-black-screen/internal/config"
+	"windows-stay-wake-black-screen/internal/singleinstance"
+	"windows-stay-wake-black-screen/internal/tray"
 )
 
 // version is stamped in at build time via -ldflags "-X main.version=...";

@@ -31,7 +31,7 @@ import (
 
 const (
 	repoOwner = "SpikePy"
-	repoName  = "StayWakeBlackScreen-Windows"
+	repoName  = "Windows-StayWakeBlackScreen"
 	assetName = "StayWakeBlackScreenIdle.exe"
 
 	runValueName = "StayWakeBlackScreenIdle"

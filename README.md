@@ -1,4 +1,4 @@
-# StayWakeBlackScreen (Windows)
+# Windows StayWakeBlackScreen
 
 Windows tools that keep a PC awake without letting the screen show
 anything — instead of turning the monitor off, they cover every screen
@@ -148,7 +148,7 @@ for troubleshooting only.
 
 ## Building from source
 
-Requires Go 1.22+.
+Requires Go 1.26+ (matching the `go` directive in `go.mod`).
 
 ```
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
@@ -182,8 +182,8 @@ cmd/stay-wake-uninstall/     Uninstall_StayWake.exe
 ## Prebuilt releases
 
 The GitHub Actions workflow (`.github/workflows/build.yml`) cross-compiles
-all three `.exe` files on every push to `main` and on every `v*` tag, and
-attaches them to a [GitHub Release](../../releases) for tagged pushes. Grab
+all four `.exe` files and publishes them to a [GitHub Release](../../releases)
+whenever a `v*` tag is pushed (or the workflow is triggered manually). Grab
 the latest from the [Releases](../../releases) page, or just run
 `Install_StayWake.exe` to fetch and install `StayWakeBlackScreenIdle.exe`
 automatically.
