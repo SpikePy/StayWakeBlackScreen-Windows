@@ -88,10 +88,14 @@ Windows StayWakeBlackScreen - Setup
 
   1) Install / update
   2) Uninstall
-  3) Exit
 
-Choose an option [1-3]:
+Choose an option [1-2] (installing/updating automatically in 5 seconds if nothing is chosen):
 ```
+
+If nothing is chosen within 5 seconds of the first prompt, it goes ahead
+with **Install / update** on its own — so double-clicking it and walking
+away still gets the tool installed/updated. Typing anything (even an
+invalid choice) cancels the countdown for the rest of that run.
 
 **Install / update** downloads the latest released
 `StayWakeBlackScreenIdle.exe`, installs it to

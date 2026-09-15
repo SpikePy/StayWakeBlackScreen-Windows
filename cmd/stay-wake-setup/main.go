@@ -4,7 +4,9 @@
 // updating, and uninstalling StayWakeBlackScreenIdle.exe. Run it with no
 // arguments (e.g. by double-clicking Setup_StayWakeBlackScreenIdle.exe)
 // and it shows an interactive menu to choose "Install / update" or
-// "Uninstall". Pass -mode to skip the prompt for scripted use.
+// "Uninstall" - defaulting to "Install / update" on its own if nothing
+// is chosen within promptTimeout. Pass -mode to skip the prompt for
+// scripted use.
 package main
 
 import (
@@ -13,9 +15,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"windows-stay-wake-black-screen/internal/setup"
 )
+
+// promptTimeout is how long the menu waits for a first keypress before
+// defaulting to "install" on its own - so double-clicking the exe and
+// walking away still gets the tool installed/updated.
+const promptTimeout = 5 * time.Second
 
 func main() {
 	mode := flag.String("mode", "", "skip the interactive menu and run this action directly: install or uninstall")
@@ -34,9 +42,6 @@ func main() {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
-		}
-		if action == "exit" {
-			return
 		}
 	}
 
@@ -70,32 +75,66 @@ func main() {
 	}
 }
 
-// promptAction shows the interactive menu and returns "install",
-// "uninstall", or "exit".
+// promptAction shows the interactive menu and returns "install" or
+// "uninstall". If nothing is chosen within promptTimeout of the first
+// prompt, it returns "install" on its own; once the user has typed
+// anything (even an invalid choice), later reprompts within the same
+// call wait indefinitely - they've shown they're there.
 func promptAction() (string, error) {
-	reader := bufio.NewReader(os.Stdin)
+	lines := make(chan string)
+	readErrs := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				readErrs <- err
+				return
+			}
+			lines <- line
+		}
+	}()
+
+	remaining := promptTimeout
 	for {
 		fmt.Println("Windows StayWakeBlackScreen - Setup")
 		fmt.Println()
 		fmt.Println("  1) Install / update")
 		fmt.Println("  2) Uninstall")
-		fmt.Println("  3) Exit")
 		fmt.Println()
-		fmt.Print("Choose an option [1-3]: ")
-
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return "", fmt.Errorf("reading input: %w", err)
+		if remaining > 0 {
+			fmt.Printf("Choose an option [1-2] (installing/updating automatically in %d seconds if nothing is chosen): ", int(remaining.Seconds()))
+		} else {
+			fmt.Print("Choose an option [1-2]: ")
 		}
+
+		var line string
+		if remaining > 0 {
+			select {
+			case line = <-lines:
+			case err := <-readErrs:
+				return "", fmt.Errorf("reading input: %w", err)
+			case <-time.After(remaining):
+				fmt.Println()
+				fmt.Println("No input received - installing/updating automatically.")
+				return "install", nil
+			}
+			remaining = 0 // only the first prompt counts down
+		} else {
+			select {
+			case line = <-lines:
+			case err := <-readErrs:
+				return "", fmt.Errorf("reading input: %w", err)
+			}
+		}
+
 		switch strings.TrimSpace(line) {
 		case "1":
 			return "install", nil
 		case "2":
 			return "uninstall", nil
-		case "3":
-			return "exit", nil
 		default:
-			fmt.Println("Please enter 1, 2, or 3.")
+			fmt.Println("Please enter 1 or 2.")
 			fmt.Println()
 		}
 	}
