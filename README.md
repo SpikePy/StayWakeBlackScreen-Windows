@@ -28,7 +28,7 @@ StayWakeBlackScreen.exe -heartbeat-seconds 5 -enable-logging
 
 Runs quietly in the background — no black screen, no input blocking, and
 a tray icon — preventing sleep/lock, until the PC has been genuinely idle
-(no real keyboard/mouse activity) for `-idle-minutes` (default 3). At that
+(no real keyboard/mouse activity) for `idle_minutes` (default 3). At that
 point it blacks out and blocks input exactly like the program above.
 Pressing **Escape** dismisses the blackout and restores input, but it
 keeps running and the idle countdown restarts — it will black out again
@@ -38,6 +38,28 @@ after another idle period, indefinitely.
 StayWakeBlackScreenIdle.exe
 StayWakeBlackScreenIdle.exe -idle-minutes 3 -heartbeat-seconds 5 -enable-logging
 ```
+
+**Config file:** on first run it creates
+`%LOCALAPPDATA%\StayWakeBlackScreen\config.yaml`:
+
+```yaml
+idle_minutes: 3
+heartbeat_seconds: 5
+poll_ms: 250
+start_enabled: true
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `idle_minutes` | `3` | Minutes of inactivity (no real keyboard/mouse input) before the screen blacks out. |
+| `heartbeat_seconds` | `5` | While blacked out, how often (seconds) the program toggles Caps Lock as a harmless "still alive" signal that keeps Windows from treating the session as idle. |
+| `poll_ms` | `250` | How often (milliseconds) the program checks for idle time and for the Escape key while blacked out. Lower is more responsive but uses slightly more CPU. |
+| `start_enabled` | `true` | Whether the idle guard is active as soon as the program starts. Set to `false` to start paused — no sleep blocking, no blackout — until enabled from the tray menu. |
+
+Edit a value and restart the program to apply it. Each option also has a
+matching command-line flag (`-idle-minutes`, `-heartbeat-seconds`,
+`-poll-ms`, `-start-enabled`) which, if passed, overrides the config file
+for that run only.
 
 **Tray icon:** a monitor glyph (black frame and stand) appears in the
 notification area, with a **black screen** while actively guarding and a
@@ -53,7 +75,7 @@ This program does not exit on its own otherwise. To stop it: the tray
 menu's *Exit*, Task Manager/`taskkill`, or the installer (which does this
 automatically when updating).
 
-### `StayWakeInstall.exe`
+### `Install_StayWake.exe`
 
 Downloads the latest released `StayWakeBlackScreenIdle.exe`, installs it
 to `%LOCALAPPDATA%\StayWakeBlackScreen\`, registers it to autostart at
@@ -61,7 +83,7 @@ login, and (re)starts it — stopping any already-running copy first so the
 file can be replaced.
 
 ```
-StayWakeInstall.exe
+Install_StayWake.exe
 ```
 
 Safe to re-run any time to update: it always ends up with exactly **one**
@@ -80,14 +102,14 @@ Flags: `-install-dir <path>` (override the install location),
 (`StayWakeBlackScreenIdle.exe`) — `StayWakeBlackScreen.exe` is left as a
 manual, run-when-you-want-it tool.
 
-### `StayWakeUninstall.exe`
+### `Uninstall_StayWake.exe`
 
-Reverses what `StayWakeInstall.exe` did: removes the autostart registry
+Reverses what `Install_StayWake.exe` did: removes the autostart registry
 entry, stops any running copy of `StayWakeBlackScreenIdle.exe` or
 `StayWakeBlackScreen.exe`, and deletes the installed files.
 
 ```
-StayWakeUninstall.exe
+Uninstall_StayWake.exe
 ```
 
 Flags: `-install-dir <path>` (override the install location, same default
@@ -128,8 +150,8 @@ Requires Go 1.22+.
 ```
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
-GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o StayWakeInstall.exe ./cmd/stay-wake-install
-GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o StayWakeUninstall.exe ./cmd/stay-wake-uninstall
+GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Install_StayWake.exe ./cmd/stay-wake-install
+GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Uninstall_StayWake.exe ./cmd/stay-wake-uninstall
 ```
 
 `-H=windowsgui` is what makes the two blackout programs run without a
@@ -145,8 +167,8 @@ internal/tray/            Notification-area icon, menu, drawn icon
 internal/singleinstance/  Named-mutex single-instance guard
 cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
 cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
-cmd/stay-wake-install/       StayWakeInstall.exe
-cmd/stay-wake-uninstall/     StayWakeUninstall.exe
+cmd/stay-wake-install/       Install_StayWake.exe
+cmd/stay-wake-uninstall/     Uninstall_StayWake.exe
 ```
 
 ## Prebuilt releases
@@ -155,7 +177,7 @@ The GitHub Actions workflow (`.github/workflows/build.yml`) cross-compiles
 all three `.exe` files on every push to `main` and on every `v*` tag, and
 attaches them to a [GitHub Release](../../releases) for tagged pushes. Grab
 the latest from the [Releases](../../releases) page, or just run
-`StayWakeInstall.exe` to fetch and install `StayWakeBlackScreenIdle.exe`
+`Install_StayWake.exe` to fetch and install `StayWakeBlackScreenIdle.exe`
 automatically.
 
 ## Requirements

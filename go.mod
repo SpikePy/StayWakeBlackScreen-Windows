@@ -3,3 +3,5 @@ module stay-wake-black-screen
 go 1.26.7
 
 require golang.org/x/sys v0.48.0
+
+require gopkg.in/yaml.v3 v3.0.1

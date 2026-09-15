@@ -3,12 +3,14 @@
 // Command staywakeblackscreenidle is a background idle guard - unlike
 // staywakeblackscreen, it does NOT block input or show the black screen
 // immediately. It just prevents the PC from sleeping/locking and keeps
-// running in the background. Only after -idle-minutes (default 3) of no
-// real keyboard/mouse activity does it show the black screen and block all
-// input, exactly like staywakeblackscreen. Pressing Escape then dismisses
-// the black screen and restores input, but the program itself keeps
-// running - the idle countdown simply restarts, and it will black out
-// again after another -idle-minutes of inactivity, repeating indefinitely.
+// running in the background. Only after idle_minutes (default 3, set via
+// config.yaml in %LOCALAPPDATA%\StayWakeBlackScreen, or overridden with
+// -idle-minutes) of no real keyboard/mouse activity does it show the
+// black screen and block all input, exactly like staywakeblackscreen.
+// Pressing Escape then dismisses the black screen and restores input, but
+// the program itself keeps running - the idle countdown simply restarts,
+// and it will black out again after another idle_minutes of inactivity,
+// repeating indefinitely.
 //
 // A tray icon (black screen = guarding, light grey screen = disabled) lets
 // the user pause/resume without stopping the process: left-click toggles
@@ -39,6 +41,7 @@ import (
 	"time"
 
 	"stay-wake-black-screen/internal/blackout"
+	"stay-wake-black-screen/internal/config"
 	"stay-wake-black-screen/internal/singleinstance"
 	"stay-wake-black-screen/internal/tray"
 )
@@ -52,9 +55,12 @@ const (
 func main() {
 	runtime.LockOSThread()
 
-	idleMinutes := flag.Int("idle-minutes", 3, "minutes of inactivity before blacking out")
-	heartbeatSeconds := flag.Int("heartbeat-seconds", 5, "seconds between Caps Lock activity heartbeats while blacked out")
-	pollMs := flag.Int("poll-ms", 250, "milliseconds between idle/escape polls")
+	cfg, cfgErr := config.Load()
+
+	idleMinutes := flag.Int("idle-minutes", cfg.IdleMinutes, "minutes of inactivity before blacking out (overrides config.yaml)")
+	heartbeatSeconds := flag.Int("heartbeat-seconds", cfg.HeartbeatSeconds, "seconds between Caps Lock activity heartbeats while blacked out (overrides config.yaml)")
+	pollMs := flag.Int("poll-ms", cfg.PollMs, "milliseconds between idle/escape polls (overrides config.yaml)")
+	startEnabled := flag.Bool("start-enabled", cfg.StartEnabled, "whether the idle guard is active on launch (overrides config.yaml)")
 	enableLogging := flag.Bool("enable-logging", false, "write diagnostics to StayWakeBlackScreenIdle.log next to the exe")
 	flag.Parse()
 
@@ -72,6 +78,9 @@ func main() {
 		}
 		defer f.Close()
 		fmt.Fprintf(f, "%s  %s\n", time.Now().Format("2006-01-02 15:04:05.000"), fmt.Sprintf(format, args...))
+	}
+	if cfgErr != nil {
+		logf("WARNING loading config.yaml (falling back to idle-minutes=%d): %v", config.DefaultIdleMinutes, cfgErr)
 	}
 
 	release, alreadyRunning, err := singleinstance.Acquire(`StayWakeBlackScreenIdle_SingleInstance`)
@@ -92,7 +101,7 @@ func main() {
 		cursorHidden   bool
 		inputBlocked   bool
 		blackedOut     bool
-		enabled        = true
+		enabled        = *startEnabled
 
 		trayHwnd uintptr
 		trayIcon uintptr
@@ -132,6 +141,10 @@ func main() {
 	// blackout), so it never sees a display-off/idle transition that
 	// could trigger a session lock.
 	blackout.BlockSleep()
+	if !enabled {
+		logf("Starting disabled (start_enabled=false)")
+		blackout.RestoreExecutionState()
+	}
 
 	enterBlackout := func() error {
 		logf("Idle timeout reached - entering blackout")
