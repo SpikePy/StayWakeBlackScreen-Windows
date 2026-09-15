@@ -7,6 +7,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"windows-stay-wake-black-screen/internal/monitoricon"
 )
 
 var (
@@ -41,40 +43,12 @@ type iconInfo struct {
 	hbmColor uintptr
 }
 
-const iconSize = 32
+// iconSize matches monitoricon.GridSize, so the glyph maps 1:1 with no
+// scaling needed.
+const iconSize = monitoricon.GridSize
 
 // pixel is BGRA order (what a 32bpp Windows DIB section expects).
 type pixel struct{ B, G, R, A byte }
-
-// monitorPart identifies which part of the monitor silhouette a pixel
-// belongs to, so the screen interior can be colored independently of the
-// frame around it and the stand/base below it.
-type monitorPart int
-
-const (
-	partNone monitorPart = iota
-	partFrame
-	partScreenInterior
-	partStand
-)
-
-// monitorGlyph reports which part of the monitor silhouette (x, y) on a
-// 32x32 canvas belongs to: a screen (frame plus interior) on a small stand
-// and base.
-func monitorGlyph(x, y int) monitorPart {
-	switch {
-	case x >= 5 && x <= 26 && y >= 6 && y <= 18:
-		return partScreenInterior
-	case x >= 3 && x <= 28 && y >= 4 && y <= 20:
-		return partFrame // screen bezel
-	case x >= 14 && x <= 17 && y >= 21 && y <= 24:
-		return partStand // stand
-	case x >= 9 && x <= 22 && y >= 25 && y <= 26:
-		return partStand // base
-	default:
-		return partNone
-	}
-}
 
 // buildMonitorIcon renders a simple flat monitor glyph as an alpha-blended
 // HICON: a black frame, screen interior, and stand/base for enabled=true
@@ -101,8 +75,8 @@ func buildMonitorIcon(enabled bool) (uintptr, error) {
 	black := pixel{B: 0, G: 0, R: 0, A: 255}
 	for y := 0; y < iconSize; y++ {
 		for x := 0; x < iconSize; x++ {
-			switch monitorGlyph(x, y) {
-			case partScreenInterior, partFrame, partStand:
+			switch monitoricon.At(x, y) {
+			case monitoricon.PartScreenInterior, monitoricon.PartFrame, monitoricon.PartStand:
 				pixels[y*iconSize+x] = black
 			}
 		}

@@ -95,7 +95,10 @@ Choose an option [1-2] (installing/updating automatically in 5 seconds if nothin
 If nothing is chosen within 5 seconds of the first prompt, it goes ahead
 with **Install / update** on its own — so double-clicking it and walking
 away still gets the tool installed/updated. Typing anything (even an
-invalid choice) cancels the countdown for the rest of that run.
+invalid choice) cancels the countdown for the rest of that run. When the
+action was auto-chosen this way, the window also closes itself 3 seconds
+after finishing (instead of waiting for Enter) — nobody was there to
+pick it, so there's likely nobody there to dismiss it either.
 
 **Install / update** downloads the latest released
 `StayWakeBlackScreenIdle.exe`, installs it to
@@ -172,14 +175,30 @@ shows `dev`.
 console window; the setup tool is left as a normal console program so
 its progress (and menu) is visible when run from a terminal.
 
+`StayWakeBlackScreen.exe` and `StayWakeBlackScreenIdle.exe` also carry
+the same monitor glyph as their tray/Explorer file icon, embedded via a
+`rsrc_windows_amd64.syso` resource file already committed in each of
+their `cmd/` directories - `go build` picks these up automatically, no
+extra step needed. If the glyph in `internal/monitoricon` ever changes,
+regenerate them with:
+
+```
+go run ./tools/genicon monitor.ico
+go run github.com/akavel/rsrc@latest -ico monitor.ico -arch amd64 -o cmd/staywakeblackscreen/rsrc_windows_amd64.syso
+go run github.com/akavel/rsrc@latest -ico monitor.ico -arch amd64 -o cmd/staywakeblackscreenidle/rsrc_windows_amd64.syso
+```
+
 Package layout:
 
 ```
 internal/blackout/       Win32 bindings: sleep/display block, input
                           hooks, overlay windows, DPI, idle detection
 internal/tray/            Notification-area icon, menu, drawn icon
+internal/monitoricon/     The monitor glyph's geometry, shared by the
+                          tray icon and the generated .exe file icon
 internal/singleinstance/  Named-mutex single-instance guard
 internal/setup/           Install/uninstall logic shared by Setup_StayWakeBlackScreenIdle.exe
+tools/genicon/            Renders internal/monitoricon as a .ico file
 cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
 cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
 cmd/stay-wake-setup/         Setup_StayWakeBlackScreenIdle.exe

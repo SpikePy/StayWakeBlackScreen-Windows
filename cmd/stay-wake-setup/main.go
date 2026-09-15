@@ -25,6 +25,12 @@ import (
 // walking away still gets the tool installed/updated.
 const promptTimeout = 5 * time.Second
 
+// autoExitTimeout is how long the final "press Enter to exit" wait is
+// capped at when the action itself was auto-chosen (nobody was at the
+// keyboard for promptTimeout, so there's nobody left to press Enter
+// either): it shows the result briefly, then exits on its own.
+const autoExitTimeout = 3 * time.Second
+
 func main() {
 	mode := flag.String("mode", "", "skip the interactive menu and run this action directly: install or uninstall")
 	installDir := flag.String("install-dir", "", "directory to install into/remove from (default: %LOCALAPPDATA%\\StayWakeBlackScreen)")
@@ -36,9 +42,14 @@ func main() {
 
 	interactive := *mode == ""
 	action := strings.ToLower(*mode)
+	autoChosen := false
+
+	var lines chan string
+	var readErrs chan error
 	if interactive {
+		lines, readErrs = startStdinReader()
 		var err error
-		action, err = promptAction()
+		action, autoChosen, err = promptAction(lines, readErrs)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
@@ -68,21 +79,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 	}
 	if interactive {
-		pause()
+		if autoChosen {
+			pauseWithTimeout(lines, readErrs, autoExitTimeout)
+		} else {
+			pause(lines, readErrs)
+		}
 	}
 	if err != nil {
 		os.Exit(1)
 	}
 }
 
-// promptAction shows the interactive menu and returns "install" or
-// "uninstall". If nothing is chosen within promptTimeout of the first
-// prompt, it returns "install" on its own; once the user has typed
-// anything (even an invalid choice), later reprompts within the same
-// call wait indefinitely - they've shown they're there.
-func promptAction() (string, error) {
-	lines := make(chan string)
-	readErrs := make(chan error, 1)
+// startStdinReader starts a single background goroutine that reads
+// stdin line by line for the lifetime of the process, so promptAction
+// and the later pause can share one reader instead of racing two
+// separate reads against the same console input.
+func startStdinReader() (lines chan string, readErrs chan error) {
+	lines = make(chan string)
+	readErrs = make(chan error, 1)
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
 		for {
@@ -94,7 +108,16 @@ func promptAction() (string, error) {
 			lines <- line
 		}
 	}()
+	return lines, readErrs
+}
 
+// promptAction shows the interactive menu and returns "install" or
+// "uninstall", plus whether it was auto-chosen (see autoExitTimeout). If
+// nothing is chosen within promptTimeout of the first prompt, it returns
+// "install" on its own; once the user has typed anything (even an
+// invalid choice), later reprompts within the same call wait
+// indefinitely - they've shown they're there.
+func promptAction(lines chan string, readErrs chan error) (action string, auto bool, err error) {
 	remaining := promptTimeout
 	for {
 		fmt.Println("Windows StayWakeBlackScreen - Setup")
@@ -112,27 +135,27 @@ func promptAction() (string, error) {
 		if remaining > 0 {
 			select {
 			case line = <-lines:
-			case err := <-readErrs:
-				return "", fmt.Errorf("reading input: %w", err)
+			case e := <-readErrs:
+				return "", false, fmt.Errorf("reading input: %w", e)
 			case <-time.After(remaining):
 				fmt.Println()
 				fmt.Println("No input received - installing/updating automatically.")
-				return "install", nil
+				return "install", true, nil
 			}
 			remaining = 0 // only the first prompt counts down
 		} else {
 			select {
 			case line = <-lines:
-			case err := <-readErrs:
-				return "", fmt.Errorf("reading input: %w", err)
+			case e := <-readErrs:
+				return "", false, fmt.Errorf("reading input: %w", e)
 			}
 		}
 
 		switch strings.TrimSpace(line) {
 		case "1":
-			return "install", nil
+			return "install", false, nil
 		case "2":
-			return "uninstall", nil
+			return "uninstall", false, nil
 		default:
 			fmt.Println("Please enter 1 or 2.")
 			fmt.Println()
@@ -143,8 +166,25 @@ func promptAction() (string, error) {
 // pause keeps the console window open (double-clicking the exe opens one
 // that would otherwise close immediately on exit) until the user
 // acknowledges the result.
-func pause() {
+func pause(lines chan string, readErrs chan error) {
 	fmt.Println()
 	fmt.Print("Press Enter to exit...")
-	bufio.NewReader(os.Stdin).ReadString('\n')
+	select {
+	case <-lines:
+	case <-readErrs:
+	}
+}
+
+// pauseWithTimeout is like pause, but also exits on its own after d -
+// used when the action itself was auto-chosen, since nobody was there
+// to pick it and so likely won't be there to press Enter either.
+func pauseWithTimeout(lines chan string, readErrs chan error, d time.Duration) {
+	fmt.Println()
+	fmt.Printf("Exiting automatically in %d seconds (press Enter to exit now)...", int(d.Seconds()))
+	select {
+	case <-lines:
+	case <-readErrs:
+	case <-time.After(d):
+	}
+	fmt.Println()
 }
