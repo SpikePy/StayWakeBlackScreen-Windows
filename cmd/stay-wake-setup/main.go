@@ -44,12 +44,11 @@ func main() {
 	action := strings.ToLower(*mode)
 	autoChosen := false
 
-	var lines chan string
-	var readErrs chan error
+	var in stdinLines
 	if interactive {
-		lines, readErrs = startStdinReader()
+		in = readStdinLines()
 		var err error
-		action, autoChosen, err = promptAction(lines, readErrs)
+		action, autoChosen, err = promptAction(in)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
@@ -79,36 +78,41 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 	}
 	if interactive {
+		var exitAfter time.Duration
 		if autoChosen {
-			pauseWithTimeout(lines, readErrs, autoExitTimeout)
-		} else {
-			pause(lines, readErrs)
+			exitAfter = autoExitTimeout
 		}
+		waitForEnter(in, exitAfter)
 	}
 	if err != nil {
 		os.Exit(1)
 	}
 }
 
-// startStdinReader starts a single background goroutine that reads
-// stdin line by line for the lifetime of the process, so promptAction
-// and the later pause can share one reader instead of racing two
-// separate reads against the same console input.
-func startStdinReader() (lines chan string, readErrs chan error) {
-	lines = make(chan string)
-	readErrs = make(chan error, 1)
+// stdinLines delivers stdin line by line from one background reader that
+// lives for the whole process, so promptAction and the final waitForEnter
+// share it instead of racing two separate reads against the same console
+// input.
+type stdinLines struct {
+	lines <-chan string
+	errs  <-chan error
+}
+
+func readStdinLines() stdinLines {
+	lines := make(chan string)
+	errs := make(chan error, 1)
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
-				readErrs <- err
+				errs <- err
 				return
 			}
 			lines <- line
 		}
 	}()
-	return lines, readErrs
+	return stdinLines{lines: lines, errs: errs}
 }
 
 // promptAction shows the interactive menu and returns "install" or
@@ -117,38 +121,33 @@ func startStdinReader() (lines chan string, readErrs chan error) {
 // "install" on its own; once the user has typed anything (even an
 // invalid choice), later reprompts within the same call wait
 // indefinitely - they've shown they're there.
-func promptAction(lines chan string, readErrs chan error) (action string, auto bool, err error) {
-	remaining := promptTimeout
+func promptAction(in stdinLines) (action string, auto bool, err error) {
+	countdown := promptTimeout
 	for {
 		fmt.Println("Windows StayWakeBlackScreen - Setup")
 		fmt.Println()
 		fmt.Println("  1) Install / update")
 		fmt.Println("  2) Uninstall")
 		fmt.Println()
-		if remaining > 0 {
-			fmt.Printf("Choose an option [1-2] (installing/updating automatically in %d seconds if nothing is chosen): ", int(remaining.Seconds()))
+
+		var expired <-chan time.Time // stays nil (never fires) once the countdown is used up
+		if countdown > 0 {
+			fmt.Printf("Choose an option [1-2] (installing/updating automatically in %d seconds if nothing is chosen): ", int(countdown.Seconds()))
+			expired = time.After(countdown)
+			countdown = 0
 		} else {
 			fmt.Print("Choose an option [1-2]: ")
 		}
 
 		var line string
-		if remaining > 0 {
-			select {
-			case line = <-lines:
-			case e := <-readErrs:
-				return "", false, fmt.Errorf("reading input: %w", e)
-			case <-time.After(remaining):
-				fmt.Println()
-				fmt.Println("No input received - installing/updating automatically.")
-				return "install", true, nil
-			}
-			remaining = 0 // only the first prompt counts down
-		} else {
-			select {
-			case line = <-lines:
-			case e := <-readErrs:
-				return "", false, fmt.Errorf("reading input: %w", e)
-			}
+		select {
+		case line = <-in.lines:
+		case e := <-in.errs:
+			return "", false, fmt.Errorf("reading input: %w", e)
+		case <-expired:
+			fmt.Println()
+			fmt.Println("No input received - installing/updating automatically.")
+			return "install", true, nil
 		}
 
 		switch strings.TrimSpace(line) {
@@ -163,28 +162,26 @@ func promptAction(lines chan string, readErrs chan error) (action string, auto b
 	}
 }
 
-// pause keeps the console window open (double-clicking the exe opens one
-// that would otherwise close immediately on exit) until the user
-// acknowledges the result.
-func pause(lines chan string, readErrs chan error) {
+// waitForEnter keeps the console window open (double-clicking the exe
+// opens one that would otherwise close immediately on exit) until the
+// user presses Enter - or, if exitAfter > 0, until that much time has
+// passed, since an auto-chosen action means nobody is likely there to
+// press it.
+func waitForEnter(in stdinLines, exitAfter time.Duration) {
 	fmt.Println()
-	fmt.Print("Press Enter to exit...")
-	select {
-	case <-lines:
-	case <-readErrs:
+	var expired <-chan time.Time // nil (never fires) unless exitAfter > 0
+	if exitAfter > 0 {
+		fmt.Printf("Exiting automatically in %d seconds (press Enter to exit now)...", int(exitAfter.Seconds()))
+		expired = time.After(exitAfter)
+	} else {
+		fmt.Print("Press Enter to exit...")
 	}
-}
-
-// pauseWithTimeout is like pause, but also exits on its own after d -
-// used when the action itself was auto-chosen, since nobody was there
-// to pick it and so likely won't be there to press Enter either.
-func pauseWithTimeout(lines chan string, readErrs chan error, d time.Duration) {
-	fmt.Println()
-	fmt.Printf("Exiting automatically in %d seconds (press Enter to exit now)...", int(d.Seconds()))
 	select {
-	case <-lines:
-	case <-readErrs:
-	case <-time.After(d):
+	case <-in.lines:
+	case <-in.errs:
+	case <-expired:
 	}
-	fmt.Println()
+	if exitAfter > 0 {
+		fmt.Println()
+	}
 }

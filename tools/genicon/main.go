@@ -1,18 +1,16 @@
 // Command genicon renders the monitoricon glyph (the same shape used by
 // the runtime tray icon) as a multi-resolution .ico file, for embedding
-// as the .exe file icon of StayWakeBlackScreen.exe and
-// StayWakeBlackScreenIdle.exe. It has no OS dependency and runs on any
-// platform.
+// as the .exe file icon of every program in cmd/. It has no OS
+// dependency and runs on any platform.
 //
 // Usage:
 //
 //	go run ./tools/genicon monitor.ico
 //
 // The resulting .ico is then embedded as a Windows resource with
-// akavel/rsrc, once per cmd directory that should carry it:
+// akavel/rsrc, once per cmd directory that should carry it, e.g.:
 //
 //	go run github.com/akavel/rsrc@latest -ico monitor.ico -arch amd64 -o cmd/staywakeblackscreen/rsrc_windows_amd64.syso
-//	go run github.com/akavel/rsrc@latest -ico monitor.ico -arch amd64 -o cmd/staywakeblackscreenidle/rsrc_windows_amd64.syso
 //
 // `go build` picks up a *_windows_amd64.syso file automatically, no
 // other wiring needed.
@@ -36,6 +34,25 @@ import (
 // stays crisp - every edge in the glyph is an axis-aligned rectangle.
 var sizes = []int{16, 24, 32, 48, 256}
 
+// iconDir and iconDirEntry are the ICO container's header and per-frame
+// directory records; encoding/binary writes their fields packed, in
+// order, exactly as the format lays them out.
+type iconDir struct {
+	Reserved uint16
+	Type     uint16 // 1 = icon
+	Count    uint16
+}
+
+type iconDirEntry struct {
+	Width, Height byte // 0 means 256
+	ColorCount    byte
+	Reserved      byte
+	Planes        uint16
+	BitCount      uint16
+	BytesInRes    uint32
+	ImageOffset   uint32
+}
+
 func render(size int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
 	black := color.RGBA{0, 0, 0, 255}
@@ -50,68 +67,44 @@ func render(size int) *image.RGBA {
 	return img
 }
 
-// writeICO packs the given square images, each a distinct size, as a
+// encodeICO packs the given square images, each a distinct size, as a
 // Vista+-style ICO with PNG-compressed frames.
-func writeICO(w *os.File, imgs []*image.RGBA) error {
-	type dirEntry struct {
-		w, h   byte
-		size   uint32
-		offset uint32
-	}
-
-	var pngs [][]byte
+func encodeICO(imgs []*image.RGBA) ([]byte, error) {
+	var frames [][]byte
 	for _, img := range imgs {
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, img); err != nil {
-			return err
+			return nil, err
 		}
-		pngs = append(pngs, buf.Bytes())
+		frames = append(frames, buf.Bytes())
 	}
 
-	offset := uint32(6 + 16*len(imgs))
-	var entries []dirEntry
+	// Writes to a bytes.Buffer never fail, so binary.Write's error is
+	// safe to ignore below.
+	var out bytes.Buffer
+	binary.Write(&out, binary.LittleEndian, iconDir{Type: 1, Count: uint16(len(imgs))})
+
+	offset := uint32(binary.Size(iconDir{}) + binary.Size(iconDirEntry{})*len(imgs))
 	for i, img := range imgs {
 		side := img.Bounds().Dx()
-		b := byte(side)
+		dim := byte(side)
 		if side >= 256 {
-			b = 0 // 0 means 256 in the ICO directory entry format
+			dim = 0
 		}
-		entries = append(entries, dirEntry{b, b, uint32(len(pngs[i])), offset})
-		offset += uint32(len(pngs[i]))
+		binary.Write(&out, binary.LittleEndian, iconDirEntry{
+			Width:       dim,
+			Height:      dim,
+			Planes:      1,
+			BitCount:    32,
+			BytesInRes:  uint32(len(frames[i])),
+			ImageOffset: offset,
+		})
+		offset += uint32(len(frames[i]))
 	}
-
-	if err := binary.Write(w, binary.LittleEndian, uint16(0)); err != nil { // reserved
-		return err
+	for _, f := range frames {
+		out.Write(f)
 	}
-	if err := binary.Write(w, binary.LittleEndian, uint16(1)); err != nil { // type: icon
-		return err
-	}
-	if err := binary.Write(w, binary.LittleEndian, uint16(len(imgs))); err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if _, err := w.Write([]byte{e.w, e.h, 0, 0}); err != nil {
-			return err
-		}
-		if err := binary.Write(w, binary.LittleEndian, uint16(1)); err != nil { // color planes
-			return err
-		}
-		if err := binary.Write(w, binary.LittleEndian, uint16(32)); err != nil { // bits per pixel
-			return err
-		}
-		if err := binary.Write(w, binary.LittleEndian, e.size); err != nil {
-			return err
-		}
-		if err := binary.Write(w, binary.LittleEndian, e.offset); err != nil {
-			return err
-		}
-	}
-	for _, data := range pngs {
-		if _, err := w.Write(data); err != nil {
-			return err
-		}
-	}
-	return nil
+	return out.Bytes(), nil
 }
 
 func main() {
@@ -125,13 +118,11 @@ func main() {
 		imgs = append(imgs, render(s))
 	}
 
-	f, err := os.Create(os.Args[1])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+	data, err := encodeICO(imgs)
+	if err == nil {
+		err = os.WriteFile(os.Args[1], data, 0o666)
 	}
-	defer f.Close()
-	if err := writeICO(f, imgs); err != nil {
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

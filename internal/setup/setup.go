@@ -28,19 +28,26 @@ const (
 	repoOwner = "SpikePy"
 	repoName  = "Windows-StayWakeBlackScreen"
 
-	// IdleAssetName and MainAssetName are the release asset / installed
+	// idleAssetName and mainAssetName are the release asset / installed
 	// exe names for the two blackout programs. Only the idle variant is
 	// ever downloaded and autostarted; the plain variant is left as a
 	// manual tool, but Uninstall still stops it if it happens to be
 	// running.
-	IdleAssetName = "StayWakeBlackScreenIdle.exe"
-	MainAssetName = "StayWakeBlackScreen.exe"
+	idleAssetName = "StayWakeBlackScreenIdle.exe"
+	mainAssetName = "StayWakeBlackScreen.exe"
 
+	runKeyPath   = `Software\Microsoft\Windows\CurrentVersion\Run`
 	runValueName = "StayWakeBlackScreenIdle"
+
+	userAgent = "stay-wake-setup"
 )
 
-// DefaultInstallDir returns %LOCALAPPDATA%\StayWakeBlackScreen.
-func DefaultInstallDir() (string, error) {
+// resolveInstallDir returns dir, or %LOCALAPPDATA%\StayWakeBlackScreen if
+// dir is empty.
+func resolveInstallDir(dir string) (string, error) {
+	if dir != "" {
+		return dir, nil
+	}
 	base := os.Getenv("LOCALAPPDATA")
 	if base == "" {
 		return "", fmt.Errorf("%%LOCALAPPDATA%% is not set")
@@ -60,7 +67,7 @@ type ghRelease struct {
 
 // InstallOptions configures Install.
 type InstallOptions struct {
-	InstallDir  string // defaults to DefaultInstallDir() if empty
+	InstallDir  string // defaults to %LOCALAPPDATA%\StayWakeBlackScreen if empty
 	GitHubToken string // optional, avoids the unauthenticated API rate limit
 	NoLaunch    bool   // install/update without starting it now
 	NoAutostart bool   // don't register (or update) the autostart entry
@@ -76,18 +83,14 @@ type InstallOptions struct {
 // (the app itself also refuses to start a second copy via a named mutex -
 // see internal/singleinstance - so this is belt and suspenders).
 func Install(opts InstallOptions) error {
-	installDir := opts.InstallDir
-	if installDir == "" {
-		var err error
-		installDir, err = DefaultInstallDir()
-		if err != nil {
-			return err
-		}
+	installDir, err := resolveInstallDir(opts.InstallDir)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(installDir, 0o755); err != nil {
 		return fmt.Errorf("creating install dir: %w", err)
 	}
-	targetPath := filepath.Join(installDir, IdleAssetName)
+	targetPath := filepath.Join(installDir, idleAssetName)
 
 	fmt.Printf("Looking up latest release of %s/%s...\n", repoOwner, repoName)
 	rel, err := latestRelease(opts.GitHubToken)
@@ -96,13 +99,13 @@ func Install(opts InstallOptions) error {
 	}
 	var downloadURL string
 	for _, a := range rel.Assets {
-		if strings.EqualFold(a.Name, IdleAssetName) {
+		if strings.EqualFold(a.Name, idleAssetName) {
 			downloadURL = a.BrowserDownloadURL
 			break
 		}
 	}
 	if downloadURL == "" {
-		return fmt.Errorf("release %s has no asset named %s", rel.TagName, IdleAssetName)
+		return fmt.Errorf("release %s has no asset named %s", rel.TagName, idleAssetName)
 	}
 	fmt.Printf("Downloading %s (%s)...\n", rel.TagName, downloadURL)
 
@@ -112,7 +115,7 @@ func Install(opts InstallOptions) error {
 	}
 
 	fmt.Println("Stopping any already-running instance...")
-	if err := terminateRunning(IdleAssetName); err != nil {
+	if err := terminateRunning(idleAssetName); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("stopping running instance: %w", err)
 	}
@@ -131,8 +134,7 @@ func Install(opts InstallOptions) error {
 
 	if !opts.NoLaunch {
 		fmt.Println("Starting it now...")
-		cmd := exec.Command(targetPath)
-		if err := cmd.Start(); err != nil {
+		if err := exec.Command(targetPath).Start(); err != nil {
 			return fmt.Errorf("starting %s: %w", targetPath, err)
 		}
 	}
@@ -143,7 +145,7 @@ func Install(opts InstallOptions) error {
 
 // UninstallOptions configures Uninstall.
 type UninstallOptions struct {
-	InstallDir string // defaults to DefaultInstallDir() if empty
+	InstallDir string // defaults to %LOCALAPPDATA%\StayWakeBlackScreen if empty
 	KeepFiles  bool   // remove autostart and stop the process, but leave the installed files in place
 }
 
@@ -152,13 +154,9 @@ type UninstallOptions struct {
 // StayWakeBlackScreen.exe, and (unless KeepFiles) deletes the installed
 // files.
 func Uninstall(opts UninstallOptions) error {
-	installDir := opts.InstallDir
-	if installDir == "" {
-		var err error
-		installDir, err = DefaultInstallDir()
-		if err != nil {
-			return err
-		}
+	installDir, err := resolveInstallDir(opts.InstallDir)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println("Removing autostart entry...")
@@ -167,11 +165,10 @@ func Uninstall(opts UninstallOptions) error {
 	}
 
 	fmt.Println("Stopping any running instance...")
-	if err := terminateRunning(IdleAssetName); err != nil {
-		return fmt.Errorf("stopping %s: %w", IdleAssetName, err)
-	}
-	if err := terminateRunning(MainAssetName); err != nil {
-		return fmt.Errorf("stopping %s: %w", MainAssetName, err)
+	for _, exe := range []string{idleAssetName, mainAssetName} {
+		if err := terminateRunning(exe); err != nil {
+			return fmt.Errorf("stopping %s: %w", exe, err)
+		}
 	}
 
 	if !opts.KeepFiles {
@@ -185,17 +182,27 @@ func Uninstall(opts UninstallOptions) error {
 	return nil
 }
 
-func latestRelease(token string) (*ghRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
+// newGitHubRequest builds a GET request carrying the headers every GitHub
+// call here needs, plus the optional auth token.
+func newGitHubRequest(url, token string) (*http.Request, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "stay-wake-setup")
+	req.Header.Set("User-Agent", userAgent)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	return req, nil
+}
+
+func latestRelease(token string) (*ghRelease, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
+	req, err := newGitHubRequest(url, token)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -214,13 +221,9 @@ func latestRelease(token string) (*ghRelease, error) {
 }
 
 func downloadFile(url, token, destPath string) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := newGitHubRequest(url, token)
 	if err != nil {
 		return err
-	}
-	req.Header.Set("User-Agent", "stay-wake-setup")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := &http.Client{Timeout: 2 * time.Minute}
 	resp, err := client.Do(req)
@@ -237,31 +240,27 @@ func downloadFile(url, token, destPath string) error {
 		return err
 	}
 	defer out.Close()
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		return err
-	}
-	return nil
+	_, err = io.Copy(out, resp.Body)
+	return err
 }
 
 // replaceFile moves tmpPath onto targetPath, retrying briefly: the target
 // may still be momentarily locked right after terminateRunning killed the
 // process that had it open/mapped.
 func replaceFile(tmpPath, targetPath string) error {
-	var lastErr error
+	var err error
 	for i := 0; i < 10; i++ {
-		if err := os.Rename(tmpPath, targetPath); err == nil {
+		if err = os.Rename(tmpPath, targetPath); err == nil {
 			return nil
-		} else {
-			lastErr = err
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
 	os.Remove(tmpPath)
-	return lastErr
+	return err
 }
 
 func setAutostart(targetPath string) error {
-	key, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE)
 	if err != nil {
 		return err
 	}
@@ -270,11 +269,11 @@ func setAutostart(targetPath string) error {
 }
 
 func removeAutostart() error {
-	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	key, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		if errors.Is(err, registry.ErrNotExist) {
-			return nil
-		}
 		return err
 	}
 	defer key.Close()
@@ -299,13 +298,10 @@ func terminateRunning(exeName string) error {
 	entry.Size = uint32(unsafe.Sizeof(entry))
 
 	var pids []uint32
-	err = windows.Process32First(snap, &entry)
-	for err == nil {
-		name := windows.UTF16ToString(entry.ExeFile[:])
-		if strings.EqualFold(name, exeName) {
+	for err = windows.Process32First(snap, &entry); err == nil; err = windows.Process32Next(snap, &entry) {
+		if strings.EqualFold(windows.UTF16ToString(entry.ExeFile[:]), exeName) {
 			pids = append(pids, entry.ProcessID)
 		}
-		err = windows.Process32Next(snap, &entry)
 	}
 
 	for _, pid := range pids {

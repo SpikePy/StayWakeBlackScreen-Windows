@@ -19,7 +19,6 @@ var (
 	modUser32   = windows.NewLazySystemDLL("user32.dll")
 	modGdi32    = windows.NewLazySystemDLL("gdi32.dll")
 	modShcore   = windows.NewLazySystemDLL("shcore.dll")
-	modShell32  = windows.NewLazySystemDLL("shell32.dll")
 
 	procGetModuleHandleW        = modKernel32.NewProc("GetModuleHandleW")
 	procSetThreadExecutionState = modKernel32.NewProc("SetThreadExecutionState")
@@ -52,8 +51,6 @@ var (
 	procCreateSolidBrush = modGdi32.NewProc("CreateSolidBrush")
 
 	procSetProcessDpiAwareness = modShcore.NewProc("SetProcessDpiAwareness")
-
-	procShellExecuteW = modShell32.NewProc("ShellExecuteW")
 )
 
 const (

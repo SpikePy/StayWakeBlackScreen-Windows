@@ -7,20 +7,10 @@
 package singleinstance
 
 import (
-	"syscall"
-	"unsafe"
+	"errors"
 
 	"golang.org/x/sys/windows"
 )
-
-var (
-	modKernel32      = windows.NewLazySystemDLL("kernel32.dll")
-	procCreateMutex  = modKernel32.NewProc("CreateMutexW")
-	procReleaseMutex = modKernel32.NewProc("ReleaseMutex")
-	procCloseHandle  = modKernel32.NewProc("CloseHandle")
-)
-
-const errorAlreadyExists syscall.Errno = 183
 
 // Acquire tries to become the sole running instance identified by name (a
 // process-unique string; it is namespaced as a Local\ kernel object, so it
@@ -37,18 +27,19 @@ func Acquire(name string) (release func(), alreadyRunning bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
-	h, _, callErr := procCreateMutex.Call(0, 1 /* bInitialOwner */, uintptr(unsafe.Pointer(namePtr)))
-	if h == 0 {
-		return nil, false, callErr
-	}
-	handle := syscall.Handle(h)
-	if errno, ok := callErr.(syscall.Errno); ok && errno == errorAlreadyExists {
-		procCloseHandle.Call(uintptr(handle))
+	h, err := windows.CreateMutex(nil, true, namePtr)
+	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		// CreateMutex still hands back a valid handle to the existing
+		// mutex in this case; it's ours to close.
+		windows.CloseHandle(h)
 		return nil, true, nil
 	}
+	if err != nil {
+		return nil, false, err
+	}
 	release = func() {
-		procReleaseMutex.Call(uintptr(handle))
-		procCloseHandle.Call(uintptr(handle))
+		windows.ReleaseMutex(h)
+		windows.CloseHandle(h)
 	}
 	return release, false, nil
 }

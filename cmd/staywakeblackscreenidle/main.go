@@ -37,11 +37,10 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
-	"path/filepath"
+	"math"
 	"runtime"
-	"time"
 
+	"windows-stay-wake-black-screen/internal/applog"
 	"windows-stay-wake-black-screen/internal/blackout"
 	"windows-stay-wake-black-screen/internal/config"
 	"windows-stay-wake-black-screen/internal/singleinstance"
@@ -71,21 +70,7 @@ func main() {
 	enableLogging := flag.Bool("enable-logging", false, "write diagnostics to StayWakeBlackScreenIdle.log next to the exe")
 	flag.Parse()
 
-	logPath := ""
-	if exe, err := os.Executable(); err == nil {
-		logPath = filepath.Join(filepath.Dir(exe), "StayWakeBlackScreenIdle.log")
-	}
-	logf := func(format string, args ...any) {
-		if !*enableLogging || logPath == "" {
-			return
-		}
-		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return
-		}
-		defer f.Close()
-		fmt.Fprintf(f, "%s  %s\n", time.Now().Format("2006-01-02 15:04:05.000"), fmt.Sprintf(format, args...))
-	}
+	logf, logPath := applog.New("StayWakeBlackScreenIdle.log", *enableLogging)
 	if cfgErr != nil {
 		logf("WARNING loading config.yaml (falling back to idle-minutes=%d): %v", config.DefaultIdleMinutes, cfgErr)
 	}
@@ -180,11 +165,10 @@ func main() {
 		}
 		inputBlocked = true
 
-		heartbeatMs := uint32(*heartbeatSeconds)
-		if heartbeatMs < 1 {
-			heartbeatMs = 1
-		}
-		heartbeatTimer, err = blackout.StartTimer(heartbeatMs * 1000)
+		// Clamp before converting: a negative flag value would otherwise
+		// wrap to a huge uint32 and effectively disable the heartbeat.
+		heartbeatSec := min(max(*heartbeatSeconds, 1), blackout.MaxTimerMs/1000)
+		heartbeatTimer, err = blackout.StartTimer(uint32(heartbeatSec * 1000))
 		if err != nil {
 			return fmt.Errorf("starting heartbeat timer: %w", err)
 		}
@@ -314,19 +298,16 @@ func main() {
 	}
 	applyTrayIcon()
 
-	idleThresholdMs := int32(*idleMinutes)
-	if idleThresholdMs < 1 {
-		idleThresholdMs = 1
-	}
-	idleThresholdMs *= 60000
+	// Idle time is measured as an int32 millisecond tick difference, so the
+	// threshold must fit in int32 too - otherwise a large idle_minutes
+	// wraps negative and blacks out immediately. Caps it at ~24.8 days.
+	idleThresholdMs := int32(min(max(*idleMinutes, 1), math.MaxInt32/60000) * 60000)
 
 	lastActivityTick = int32(blackout.GetTickCount())
 
-	pollInterval := uint32(*pollMs)
-	if pollInterval < 50 {
-		pollInterval = 50
-	}
-	fastTimer, err = blackout.StartTimer(pollInterval)
+	// Clamp before converting: a negative flag value would otherwise wrap
+	// to a huge uint32 and effectively stop the idle/Escape polling.
+	fastTimer, err = blackout.StartTimer(uint32(min(max(*pollMs, 50), blackout.MaxTimerMs)))
 	if err != nil {
 		logf("EXCEPTION starting poll timer: %v", err)
 		return
@@ -367,9 +348,7 @@ func main() {
 			}
 		case heartbeatTimer:
 			if blackedOut {
-				blackout.ToggleCapsLock()
-				time.Sleep(150 * time.Millisecond)
-				blackout.ToggleCapsLock()
+				blackout.PulseCapsLock()
 			}
 		}
 	}

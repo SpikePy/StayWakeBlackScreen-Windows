@@ -7,7 +7,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // Rect is a monitor's or window's bounds in physical (DPI-aware) pixels.
@@ -76,24 +79,17 @@ func RestoreExecutionState() {
 // with its extension (e.g. the default YAML editor for a .yaml file),
 // the same as double-clicking it in Explorer.
 func OpenFile(path string) error {
-	verb, err := syscall.UTF16PtrFromString("open")
-	if err != nil {
-		return fmt.Errorf("encoding verb: %w", err)
-	}
-	file, err := syscall.UTF16PtrFromString(path)
+	file, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return fmt.Errorf("encoding path: %w", err)
 	}
-	r, _, err := procShellExecuteW.Call(0, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(file)), 0, 0, swShow)
-	// ShellExecuteW returns a value > 32 on success; anything <= 32 is an
-	// error code, per its documented (if dated) HINSTANCE-shaped return.
-	if r <= 32 {
-		return fmt.Errorf("ShellExecuteW returned %d: %w", r, err)
+	if err := windows.ShellExecute(0, utf16Ptr("open"), file, nil, nil, swShow); err != nil {
+		return fmt.Errorf("ShellExecuteW: %w", err)
 	}
 	return nil
 }
 
-var escapeRequested int32
+var escapeRequested atomic.Bool
 
 // InstallInputBlockHooks installs system-wide low-level keyboard and mouse
 // hooks that swallow every event - nothing reaches any window, including
@@ -102,7 +98,7 @@ var escapeRequested int32
 // Windows never lets any hook suppress Ctrl+Alt+Del, so that combination
 // always remains a hard escape hatch regardless of anything going wrong.
 func InstallInputBlockHooks() error {
-	atomic.StoreInt32(&escapeRequested, 0)
+	escapeRequested.Store(false)
 	hMod := getModuleHandle()
 
 	kh, _, e1 := procSetWindowsHookExW.Call(uintptr(whKeyboardLL), keyboardHookCB, uintptr(hMod), 0)
@@ -138,7 +134,7 @@ func RemoveInputBlockHooks() {
 // were installed or since the last call to TakeEscapeRequested, and clears
 // the flag.
 func TakeEscapeRequested() bool {
-	return atomic.SwapInt32(&escapeRequested, 0) == 1
+	return escapeRequested.Swap(false)
 }
 
 var (
@@ -163,7 +159,7 @@ func keyboardHookProc(nCode int32, wParam, lParam uintptr) uintptr {
 	}
 	if wParam == wmKeydown || wParam == wmSyskeydown {
 		if data.VkCode == vkEscape {
-			atomic.StoreInt32(&escapeRequested, 1)
+			escapeRequested.Store(true)
 		}
 	}
 	// Swallow every other key: do not call CallNextHookEx, so nothing -
@@ -180,12 +176,20 @@ func mouseHookProc(nCode int32, wParam, lParam uintptr) uintptr {
 	return 1
 }
 
-// ToggleCapsLock presses and releases the (synthetic, marked) Caps Lock key.
-// Used as a periodic activity heartbeat.
+// ToggleCapsLock presses and releases the (synthetic, marked) Caps Lock
+// key once, flipping its state.
 func ToggleCapsLock() {
 	marker := uintptr(ownInjectedMarker)
 	procKeybdEvent.Call(uintptr(vkCapital), 0x45, 0, marker)
 	procKeybdEvent.Call(uintptr(vkCapital), 0x45, uintptr(keyeventfKeyup), marker)
+}
+
+// PulseCapsLock toggles Caps Lock and, 150ms later, back again: one
+// activity heartbeat that leaves the Caps Lock state as it found it.
+func PulseCapsLock() {
+	ToggleCapsLock()
+	time.Sleep(150 * time.Millisecond)
+	ToggleCapsLock()
 }
 
 // IsCapsLockOn reports the current Caps Lock toggle state.
@@ -302,6 +306,11 @@ func HideCursor() { procShowCursor.Call(0) }
 
 // ShowCursorAgain restores the system cursor hidden by HideCursor.
 func ShowCursorAgain() { procShowCursor.Call(1) }
+
+// MaxTimerMs is USER_TIMER_MAXIMUM, the longest interval StartTimer
+// accepts (~24.8 days). Callers deriving an interval from user input
+// should clamp to it before converting to uint32.
+const MaxTimerMs = 0x7FFFFFFF
 
 // StartTimer creates a message-only timer (delivered as WM_TIMER with Hwnd
 // 0) and returns its system-assigned id, to be passed to StopTimer and

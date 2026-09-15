@@ -6,7 +6,6 @@ package tray
 
 import (
 	"fmt"
-	"sync"
 	"syscall"
 	"unsafe"
 
@@ -14,8 +13,11 @@ import (
 )
 
 var (
-	modUser32  = windows.NewLazySystemDLL("user32.dll")
-	modShell32 = windows.NewLazySystemDLL("shell32.dll")
+	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
+	modUser32   = windows.NewLazySystemDLL("user32.dll")
+	modShell32  = windows.NewLazySystemDLL("shell32.dll")
+
+	procGetModuleHandleW = modKernel32.NewProc("GetModuleHandleW")
 
 	procRegisterClassExW    = modUser32.NewProc("RegisterClassExW")
 	procCreateWindowExW     = modUser32.NewProc("CreateWindowExW")
@@ -35,7 +37,6 @@ var (
 const (
 	wsOverlappedWindow = 0x00000000
 
-	wmDestroy   = 0x0002
 	wmNull      = 0x0000
 	wmLButtonUp = 0x0202
 	wmRButtonUp = 0x0205
@@ -54,7 +55,6 @@ const (
 	mfString    = 0x00000000
 	mfSeparator = 0x00000800
 	mfChecked   = 0x00000008
-	mfGrayed    = 0x00000001
 
 	tpmRightButton = 0x0002
 	tpmReturnCmd   = 0x0100
@@ -114,30 +114,22 @@ type point struct{ X, Y int32 }
 const trayWindowClassName = "StayWakeTrayHiddenWindow"
 
 var (
-	mu           sync.Mutex
+	// Set once by NewWindow before its window exists, and only read by
+	// wndProcCB, which the message loop runs on that same locked OS
+	// thread - so no locking is needed.
 	onLeftClick  func()
 	onRightClick func()
 
 	wndProcCB = syscall.NewCallback(func(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
-		if message == wmTrayCallback {
-			switch lParam {
-			case wmLButtonUp:
-				mu.Lock()
-				cb := onLeftClick
-				mu.Unlock()
-				if cb != nil {
-					cb()
-				}
-				return 0
-			case wmRButtonUp:
-				mu.Lock()
-				cb := onRightClick
-				mu.Unlock()
-				if cb != nil {
-					cb()
-				}
-				return 0
+		if message == wmTrayCallback && (lParam == wmLButtonUp || lParam == wmRButtonUp) {
+			cb := onLeftClick
+			if lParam == wmRButtonUp {
+				cb = onRightClick
 			}
+			if cb != nil {
+				cb()
+			}
+			return 0
 		}
 		r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(message), wParam, lParam)
 		return r
@@ -157,9 +149,7 @@ func utf16Ptr(s string) *uint16 {
 // its messages pumped from, the same OS thread for the lifetime of the
 // program (see runtime.LockOSThread in main).
 func NewWindow(left, right func()) (uintptr, error) {
-	mu.Lock()
 	onLeftClick, onRightClick = left, right
-	mu.Unlock()
 
 	hInstance := getModuleHandle()
 
@@ -189,6 +179,8 @@ func NewWindow(left, right func()) (uintptr, error) {
 	return hwnd, nil
 }
 
+// DestroyWindow destroys a window created by NewWindow. Safe to call on a
+// zero handle.
 func DestroyWindow(hwnd uintptr) {
 	if hwnd != 0 {
 		procDestroyWindow.Call(hwnd)
@@ -196,9 +188,7 @@ func DestroyWindow(hwnd uintptr) {
 }
 
 func getModuleHandle() syscall.Handle {
-	modKernel32 := windows.NewLazySystemDLL("kernel32.dll")
-	proc := modKernel32.NewProc("GetModuleHandleW")
-	r, _, _ := proc.Call(0)
+	r, _, _ := procGetModuleHandleW.Call(0)
 	return syscall.Handle(r)
 }
 
@@ -252,10 +242,9 @@ func RemoveIcon(hwnd uintptr) {
 // reserved (means "nothing selected"); a zero-value MenuItem renders as a
 // separator.
 type MenuItem struct {
-	ID       uint32
-	Label    string
-	Checked  bool
-	Disabled bool
+	ID      uint32
+	Label   string
+	Checked bool
 }
 
 // ShowMenu displays a popup menu at the current cursor position, owned by
@@ -276,9 +265,6 @@ func ShowMenu(hwnd uintptr, items []MenuItem) uint32 {
 		flags := uintptr(mfString)
 		if it.Checked {
 			flags |= mfChecked
-		}
-		if it.Disabled {
-			flags |= mfGrayed
 		}
 		procAppendMenuW.Call(hMenu, flags, uintptr(it.ID), uintptr(unsafe.Pointer(utf16Ptr(it.Label))))
 	}

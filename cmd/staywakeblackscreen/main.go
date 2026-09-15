@@ -27,12 +27,9 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	"os"
-	"path/filepath"
 	"runtime"
-	"time"
 
+	"windows-stay-wake-black-screen/internal/applog"
 	"windows-stay-wake-black-screen/internal/blackout"
 	"windows-stay-wake-black-screen/internal/singleinstance"
 )
@@ -47,21 +44,7 @@ func main() {
 	enableLogging := flag.Bool("enable-logging", false, "write diagnostics to StayWakeBlackScreen.log next to the exe")
 	flag.Parse()
 
-	logPath := ""
-	if exe, err := os.Executable(); err == nil {
-		logPath = filepath.Join(filepath.Dir(exe), "StayWakeBlackScreen.log")
-	}
-	logf := func(format string, args ...any) {
-		if !*enableLogging || logPath == "" {
-			return
-		}
-		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return
-		}
-		defer f.Close()
-		fmt.Fprintf(f, "%s  %s\n", time.Now().Format("2006-01-02 15:04:05.000"), fmt.Sprintf(format, args...))
-	}
+	logf, logPath := applog.New("StayWakeBlackScreen.log", *enableLogging)
 
 	release, alreadyRunning, err := singleinstance.Acquire(`StayWakeBlackScreen_SingleInstance`)
 	if err != nil {
@@ -147,11 +130,10 @@ func main() {
 	}
 	inputBlocked = true
 
-	heartbeatMs := uint32(*heartbeatSeconds)
-	if heartbeatMs < 1 {
-		heartbeatMs = 1
-	}
-	heartbeatTimer, err = blackout.StartTimer(heartbeatMs * 1000)
+	// Clamp before converting: a negative flag value would otherwise wrap
+	// to a huge uint32 and effectively disable the heartbeat.
+	heartbeatSec := min(max(*heartbeatSeconds, 1), blackout.MaxTimerMs/1000)
+	heartbeatTimer, err = blackout.StartTimer(uint32(heartbeatSec * 1000))
 	if err != nil {
 		logf("EXCEPTION starting heartbeat timer: %v", err)
 		return
@@ -171,9 +153,7 @@ func main() {
 		if m.Hwnd == 0 && m.Message == blackout.WMTimer {
 			switch m.WParam {
 			case heartbeatTimer:
-				blackout.ToggleCapsLock()
-				time.Sleep(150 * time.Millisecond)
-				blackout.ToggleCapsLock()
+				blackout.PulseCapsLock()
 			case escapeTimer:
 				if blackout.TakeEscapeRequested() {
 					exitReason = "Escape pressed"
