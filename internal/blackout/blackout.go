@@ -307,11 +307,6 @@ func HideCursor() { procShowCursor.Call(0) }
 // ShowCursorAgain restores the system cursor hidden by HideCursor.
 func ShowCursorAgain() { procShowCursor.Call(1) }
 
-// MaxTimerMs is USER_TIMER_MAXIMUM, the longest interval StartTimer
-// accepts (~24.8 days). Callers deriving an interval from user input
-// should clamp to it before converting to uint32.
-const MaxTimerMs = 0x7FFFFFFF
-
 // StartTimer creates a message-only timer (delivered as WM_TIMER with Hwnd
 // 0) and returns its system-assigned id, to be passed to StopTimer and
 // compared against Msg.WParam in the message loop.

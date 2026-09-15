@@ -98,7 +98,9 @@ away still gets the tool installed/updated. Typing anything (even an
 invalid choice) cancels the countdown for the rest of that run. When the
 action was auto-chosen this way, the window also closes itself 3 seconds
 after finishing (instead of waiting for Enter) — nobody was there to
-pick it, so there's likely nobody there to dismiss it either.
+pick it, so there's likely nobody there to dismiss it either. If that
+unattended run fails, though, the window stays open and waits for Enter,
+so the error is still on screen when you come back.
 
 **Install / update** downloads the latest released
 `StayWakeBlackScreenIdle.exe`, installs it to
@@ -166,6 +168,10 @@ GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBla
 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Setup_StayWakeBlackScreenIdle.exe ./cmd/stay-wake-setup
 ```
 
+Run the tests with `go test ./...`. They cover the OS-independent parts
+(config loading, the icon glyph and generator, the Setup menu, and the
+timing limits) and run on any platform.
+
 `StayWakeBlackScreenIdle.exe`'s tray tooltip shows a version string,
 stamped in via `-X main.version=v1.2.3` appended to its `-ldflags` (the
 release build does this from the pushed tag); a build without it just
@@ -200,6 +206,9 @@ internal/monitoricon/     The monitor glyph's geometry, shared by the
                           tray icon and the generated .exe file icon
 internal/singleinstance/  Named-mutex single-instance guard
 internal/setup/           Install/uninstall logic shared by Setup_StayWakeBlackScreenIdle.exe
+internal/setupmenu/       Setup's interactive console menu (OS-independent)
+internal/config/          Loads, and on first run creates, config.yaml
+internal/applog/          Opt-in diagnostics log next to the exe
 tools/genicon/            Renders internal/monitoricon as a .ico file
 cmd/staywakeblackscreen/     StayWakeBlackScreen.exe
 cmd/staywakeblackscreenidle/ StayWakeBlackScreenIdle.exe
@@ -215,6 +224,10 @@ the latest from the [Releases](../../releases) page, or just run
 `Setup_StayWakeBlackScreenIdle.exe` and choose "Install / update" to fetch and install
 `StayWakeBlackScreenIdle.exe` automatically.
 
+Every push and pull request to `main` also runs `.github/workflows/ci.yml`:
+the tests, vet, and a compile of all three `.exe` files, without
+publishing anything.
+
 ## Requirements
 
 - Windows (Windows Forms-equivalent GUI + Win32 hooks are Windows-only)
@@ -227,3 +240,7 @@ the latest from the [Releases](../../releases) page, or just run
 - Not intended to bypass any organizational policy — use only on machines
   and in contexts where preventing idle-lock/sleep is something you're
   authorized to do.
+
+## License
+
+MIT - see [LICENSE](LICENSE).

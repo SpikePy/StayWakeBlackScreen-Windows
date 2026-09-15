@@ -10,7 +10,6 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"windows-stay-wake-black-screen/internal/setup"
+	"windows-stay-wake-black-screen/internal/setupmenu"
 )
 
 // promptTimeout is how long the menu waits for a first keypress before
@@ -25,10 +25,11 @@ import (
 // walking away still gets the tool installed/updated.
 const promptTimeout = 5 * time.Second
 
-// autoExitTimeout is how long the final "press Enter to exit" wait is
-// capped at when the action itself was auto-chosen (nobody was at the
-// keyboard for promptTimeout, so there's nobody left to press Enter
-// either): it shows the result briefly, then exits on its own.
+// autoExitTimeout caps the final "press Enter to exit" wait when the
+// action was auto-chosen and succeeded: nobody was at the keyboard for
+// promptTimeout, so there's likely nobody left to press Enter either. A
+// failed auto-chosen run waits for Enter like a manual one, so the error
+// is still on screen for whoever comes back to it.
 const autoExitTimeout = 3 * time.Second
 
 func main() {
@@ -44,11 +45,11 @@ func main() {
 	action := strings.ToLower(*mode)
 	autoChosen := false
 
-	var in stdinLines
+	var in setupmenu.Lines
 	if interactive {
-		in = readStdinLines()
+		in = setupmenu.ReadLines(os.Stdin)
 		var err error
-		action, autoChosen, err = promptAction(in)
+		action, autoChosen, err = setupmenu.Prompt(in, os.Stdout, promptTimeout)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
@@ -79,109 +80,12 @@ func main() {
 	}
 	if interactive {
 		var exitAfter time.Duration
-		if autoChosen {
+		if autoChosen && err == nil {
 			exitAfter = autoExitTimeout
 		}
-		waitForEnter(in, exitAfter)
+		setupmenu.WaitForEnter(in, os.Stdout, exitAfter)
 	}
 	if err != nil {
 		os.Exit(1)
-	}
-}
-
-// stdinLines delivers stdin line by line from one background reader that
-// lives for the whole process, so promptAction and the final waitForEnter
-// share it instead of racing two separate reads against the same console
-// input.
-type stdinLines struct {
-	lines <-chan string
-	errs  <-chan error
-}
-
-func readStdinLines() stdinLines {
-	lines := make(chan string)
-	errs := make(chan error, 1)
-	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				errs <- err
-				return
-			}
-			lines <- line
-		}
-	}()
-	return stdinLines{lines: lines, errs: errs}
-}
-
-// promptAction shows the interactive menu and returns "install" or
-// "uninstall", plus whether it was auto-chosen (see autoExitTimeout). If
-// nothing is chosen within promptTimeout of the first prompt, it returns
-// "install" on its own; once the user has typed anything (even an
-// invalid choice), later reprompts within the same call wait
-// indefinitely - they've shown they're there.
-func promptAction(in stdinLines) (action string, auto bool, err error) {
-	countdown := promptTimeout
-	for {
-		fmt.Println("Windows StayWakeBlackScreen - Setup")
-		fmt.Println()
-		fmt.Println("  1) Install / update")
-		fmt.Println("  2) Uninstall")
-		fmt.Println()
-
-		var expired <-chan time.Time // stays nil (never fires) once the countdown is used up
-		if countdown > 0 {
-			fmt.Printf("Choose an option [1-2] (installing/updating automatically in %d seconds if nothing is chosen): ", int(countdown.Seconds()))
-			expired = time.After(countdown)
-			countdown = 0
-		} else {
-			fmt.Print("Choose an option [1-2]: ")
-		}
-
-		var line string
-		select {
-		case line = <-in.lines:
-		case e := <-in.errs:
-			return "", false, fmt.Errorf("reading input: %w", e)
-		case <-expired:
-			fmt.Println()
-			fmt.Println("No input received - installing/updating automatically.")
-			return "install", true, nil
-		}
-
-		switch strings.TrimSpace(line) {
-		case "1":
-			return "install", false, nil
-		case "2":
-			return "uninstall", false, nil
-		default:
-			fmt.Println("Please enter 1 or 2.")
-			fmt.Println()
-		}
-	}
-}
-
-// waitForEnter keeps the console window open (double-clicking the exe
-// opens one that would otherwise close immediately on exit) until the
-// user presses Enter - or, if exitAfter > 0, until that much time has
-// passed, since an auto-chosen action means nobody is likely there to
-// press it.
-func waitForEnter(in stdinLines, exitAfter time.Duration) {
-	fmt.Println()
-	var expired <-chan time.Time // nil (never fires) unless exitAfter > 0
-	if exitAfter > 0 {
-		fmt.Printf("Exiting automatically in %d seconds (press Enter to exit now)...", int(exitAfter.Seconds()))
-		expired = time.After(exitAfter)
-	} else {
-		fmt.Print("Press Enter to exit...")
-	}
-	select {
-	case <-in.lines:
-	case <-in.errs:
-	case <-expired:
-	}
-	if exitAfter > 0 {
-		fmt.Println()
 	}
 }

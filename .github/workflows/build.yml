@@ -21,6 +21,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Test
+        run: go test ./...
+
       - name: Vet
         # -unsafeptr=false: this package's unsafe.Pointer conversions of
         # LPARAM/DIB-section addresses supplied by Win32 (hook callbacks,

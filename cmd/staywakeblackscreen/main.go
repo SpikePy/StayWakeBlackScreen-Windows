@@ -130,10 +130,7 @@ func main() {
 	}
 	inputBlocked = true
 
-	// Clamp before converting: a negative flag value would otherwise wrap
-	// to a huge uint32 and effectively disable the heartbeat.
-	heartbeatSec := min(max(*heartbeatSeconds, 1), blackout.MaxTimerMs/1000)
-	heartbeatTimer, err = blackout.StartTimer(uint32(heartbeatSec * 1000))
+	heartbeatTimer, err = blackout.StartTimer(blackout.HeartbeatMs(*heartbeatSeconds))
 	if err != nil {
 		logf("EXCEPTION starting heartbeat timer: %v", err)
 		return
