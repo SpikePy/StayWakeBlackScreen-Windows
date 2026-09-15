@@ -37,21 +37,21 @@ jobs:
           GOARCH: amd64
 
       - name: Build StayWakeBlackScreen.exe
-        run: go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
+        run: go build -trimpath -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
         env:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: 0
 
       - name: Build StayWakeBlackScreenIdle.exe
-        run: go build -ldflags "-H=windowsgui -s -w -X main.version=${{ github.ref_name }}" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
+        run: go build -trimpath -ldflags "-H=windowsgui -s -w -X main.version=${{ github.ref_name }}" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
         env:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: 0
 
       - name: Build Setup_StayWakeBlackScreenIdle.exe
-        run: go build -ldflags "-s -w" -o Setup_StayWakeBlackScreenIdle.exe ./cmd/stay-wake-setup
+        run: go build -trimpath -ldflags "-s -w" -o Setup_StayWakeBlackScreenIdle.exe ./cmd/stay-wake-setup
         env:
           GOOS: windows
           GOARCH: amd64

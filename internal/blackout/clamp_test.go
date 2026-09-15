@@ -22,26 +22,6 @@ func TestHeartbeatMs(t *testing.T) {
 	}
 }
 
-func TestPollMs(t *testing.T) {
-	tests := []struct {
-		ms   int
-		want uint32
-	}{
-		{-1, 50}, // used to wrap to ~49.7 days
-		{0, 50},
-		{10, 50},
-		{50, 50},
-		{250, 250},
-		{1 << 31, MaxTimerMs},
-		{1 << 40, MaxTimerMs},
-	}
-	for _, tt := range tests {
-		if got := PollMs(tt.ms); got != tt.want {
-			t.Errorf("PollMs(%d) = %d, want %d", tt.ms, got, tt.want)
-		}
-	}
-}
-
 func TestIdleThresholdMs(t *testing.T) {
 	tests := []struct {
 		minutes int

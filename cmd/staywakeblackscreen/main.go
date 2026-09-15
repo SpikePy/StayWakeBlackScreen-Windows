@@ -35,9 +35,9 @@ import (
 )
 
 func main() {
-	// Win32 hooks and the message queue are bound to the OS thread that
-	// installs/creates them; the Go runtime must never migrate this
-	// goroutine to a different one mid-run.
+	// Win32 hooks, timers and the message queue are bound to the OS thread
+	// that creates them; the Go runtime must never migrate this goroutine
+	// to a different one mid-run.
 	runtime.LockOSThread()
 
 	heartbeatSeconds := flag.Int("heartbeat-seconds", 5, "seconds between Caps Lock activity heartbeats")
@@ -57,37 +57,17 @@ func main() {
 	}
 	defer release()
 
-	var (
-		overlayWindows []uintptr
-		heartbeatTimer uintptr
-		escapeTimer    uintptr
-		cursorHidden   bool
-		inputBlocked   bool
-		exitReason     = "message loop returned without any handler logging a reason (unexpected)"
-	)
+	var session *blackout.Session
+	exitReason := "message loop returned without any handler logging a reason (unexpected)"
 
-	cleanup := func() {
-		// Restore input FIRST, before anything else, so the user regains
-		// control of their keyboard/mouse as soon as possible no matter
-		// what else below might fail.
-		if inputBlocked {
-			blackout.RemoveInputBlockHooks()
-		}
-		if cursorHidden {
-			blackout.ShowCursorAgain()
-		}
-		blackout.StopTimer(heartbeatTimer)
-		blackout.StopTimer(escapeTimer)
-		for _, h := range overlayWindows {
-			blackout.DestroyOverlayWindow(h)
-		}
+	defer func() {
+		// Session.End restores input first, so the user regains control of
+		// their keyboard and mouse as soon as possible no matter what else
+		// might fail.
+		session.End()
 		blackout.RestoreExecutionState()
-		if blackout.IsCapsLockOn() {
-			blackout.ToggleCapsLock()
-		}
 		logf("Cleanup done. Log at: %s", logPath)
-	}
-	defer cleanup()
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			logf("PANIC: %v", r)
@@ -97,47 +77,12 @@ func main() {
 	blackout.EnableDPIAwareness()
 	blackout.BlockSleep()
 
-	monitors, err := blackout.Monitors()
-	if err != nil || len(monitors) == 0 {
-		logf("EXCEPTION enumerating monitors: %v", err)
-		return
-	}
-	for _, m := range monitors {
-		hwnd, err := blackout.CreateOverlayWindow(m)
-		if err != nil {
-			logf("EXCEPTION creating overlay window for %+v: %v", m, err)
-			return
-		}
-		overlayWindows = append(overlayWindows, hwnd)
-		logf("Created overlay window for bounds=%+v", m)
-	}
-	for _, h := range overlayWindows {
-		blackout.ShowOverlayWindow(h)
-	}
-	if len(overlayWindows) > 0 {
-		blackout.FocusWindow(overlayWindows[0])
-	}
-	blackout.HideCursor()
-	cursorHidden = true
-
-	// Blocks ALL keyboard/mouse input system-wide at the OS level -
-	// nothing reaches any window, including this one's. Escape is
-	// detected inside the hook itself and picked up by the escape-watch
-	// timer below.
-	if err := blackout.InstallInputBlockHooks(); err != nil {
-		logf("EXCEPTION installing input hooks: %v", err)
-		return
-	}
-	inputBlocked = true
-
-	heartbeatTimer, err = blackout.StartTimer(blackout.HeartbeatMs(*heartbeatSeconds))
+	// Blacks out every screen and blocks ALL keyboard/mouse input
+	// system-wide at the OS level - nothing reaches any window, including
+	// this one's. Escape presses arrive below as WMEscapePressed.
+	session, err = blackout.Start(blackout.HeartbeatMs(*heartbeatSeconds), logf)
 	if err != nil {
-		logf("EXCEPTION starting heartbeat timer: %v", err)
-		return
-	}
-	escapeTimer, err = blackout.StartTimer(50)
-	if err != nil {
-		logf("EXCEPTION starting escape-watch timer: %v", err)
+		logf("EXCEPTION %v", err)
 		return
 	}
 
@@ -147,19 +92,15 @@ func main() {
 		if !ok {
 			break
 		}
-		if m.Hwnd == 0 && m.Message == blackout.WMTimer {
-			switch m.WParam {
-			case heartbeatTimer:
-				blackout.PulseCapsLock()
-			case escapeTimer:
-				if blackout.TakeEscapeRequested() {
-					exitReason = "Escape pressed"
-					blackout.PostQuitMessage()
-				}
-			}
-			continue
+		switch {
+		case m.Hwnd == 0 && m.Message == blackout.WMTimer:
+			session.HandleTimer(m.WParam)
+		case m.Hwnd == 0 && m.Message == blackout.WMEscapePressed:
+			exitReason = "Escape pressed"
+			blackout.PostQuitMessage()
+		default:
+			blackout.Dispatch(m)
 		}
-		blackout.Dispatch(m)
 	}
 	logf("Message loop returned. Reason: %s", exitReason)
 }

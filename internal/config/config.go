@@ -19,7 +19,6 @@ import (
 const (
 	DefaultIdleMinutes      = 3
 	DefaultHeartbeatSeconds = 5
-	DefaultPollMs           = 250
 	DefaultStartEnabled     = true
 )
 
@@ -37,22 +36,17 @@ idle_minutes: %d
 # per-run with -heartbeat-seconds.
 heartbeat_seconds: %d
 
-# poll_ms: how often (in milliseconds) the program checks for idle time
-# and for the Escape key while blacked out. Lower is more responsive but
-# uses slightly more CPU. Can still be overridden per-run with -poll-ms.
-poll_ms: %d
-
 # start_enabled: whether the idle guard is active as soon as the program
 # starts (true), or starts paused - no blackout, no sleep blocking - until
 # enabled from the tray menu (false).
 start_enabled: %t
 `
 
-// Config holds the settings read from config.yaml.
+// Config holds the settings read from config.yaml. Keys it doesn't know,
+// such as the poll_ms that older versions wrote, are ignored.
 type Config struct {
 	IdleMinutes      int  `yaml:"idle_minutes"`
 	HeartbeatSeconds int  `yaml:"heartbeat_seconds"`
-	PollMs           int  `yaml:"poll_ms"`
 	StartEnabled     bool `yaml:"start_enabled"`
 }
 
@@ -60,7 +54,6 @@ func defaults() Config {
 	return Config{
 		IdleMinutes:      DefaultIdleMinutes,
 		HeartbeatSeconds: DefaultHeartbeatSeconds,
-		PollMs:           DefaultPollMs,
 		StartEnabled:     DefaultStartEnabled,
 	}
 }
@@ -83,7 +76,7 @@ func Load() (Config, error) {
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		text := fmt.Sprintf(template, DefaultIdleMinutes, DefaultHeartbeatSeconds, DefaultPollMs, DefaultStartEnabled)
+		text := fmt.Sprintf(template, DefaultIdleMinutes, DefaultHeartbeatSeconds, DefaultStartEnabled)
 		if werr := os.WriteFile(path, []byte(text), 0o644); werr != nil {
 			return def, fmt.Errorf("writing default config.yaml: %w", werr)
 		}
@@ -102,9 +95,6 @@ func Load() (Config, error) {
 	}
 	if cfg.HeartbeatSeconds < 1 {
 		cfg.HeartbeatSeconds = DefaultHeartbeatSeconds
-	}
-	if cfg.PollMs < 1 {
-		cfg.PollMs = DefaultPollMs
 	}
 	return cfg, nil
 }

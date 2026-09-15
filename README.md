@@ -45,7 +45,6 @@ StayWakeBlackScreenIdle.exe -idle-minutes 3 -heartbeat-seconds 5 -enable-logging
 ```yaml
 idle_minutes: 3
 heartbeat_seconds: 5
-poll_ms: 250
 start_enabled: true
 ```
 
@@ -53,13 +52,14 @@ start_enabled: true
 | --- | --- | --- |
 | `idle_minutes` | `3` | Minutes of inactivity (no real keyboard/mouse input) before the screen blacks out. |
 | `heartbeat_seconds` | `5` | While blacked out, how often (seconds) the program toggles Caps Lock as a harmless "still alive" signal that keeps Windows from treating the session as idle. |
-| `poll_ms` | `250` | How often (milliseconds) the program checks for idle time and for the Escape key while blacked out. Lower is more responsive but uses slightly more CPU. |
 | `start_enabled` | `true` | Whether the idle guard is active as soon as the program starts. Set to `false` to start paused — no sleep blocking, no blackout — until enabled from the tray menu. |
 
 Edit a value and restart the program to apply it. Each option also has a
 matching command-line flag (`-idle-minutes`, `-heartbeat-seconds`,
-`-poll-ms`, `-start-enabled`) which, if passed, overrides the config file
-for that run only.
+`-start-enabled`) which, if passed, overrides the config file for that
+run only. Config files from older versions may still contain a
+`poll_ms` line; it's no longer used (nothing polls any more) and is
+ignored.
 
 **Tray icon:** a monitor glyph (black frame, screen, and stand) appears in
 the notification area while actively guarding, and the same glyph **greyed
@@ -147,6 +147,12 @@ the installed files in place, uninstall only).
   environments use to avoid idle/lock detection; the hook lets only this
   specific synthetic keystroke through so the Caps Lock LED actually
   updates, and the final state is cleaned up on exit.
+- Nothing polls. The idle guard sets a single timer for the moment the
+  idle threshold would be reached (re-arming it for the rest if there was
+  input in the meantime), and the input hook wakes the program directly
+  when Escape is pressed.
+- Setup downloads through WinINet, Windows' own HTTP stack, so it uses
+  your system proxy settings and Windows' certificate store.
 - **Ctrl+Alt+Del always remains available** — Windows never lets any hook
   suppress it — so it's a hard escape hatch no matter what else goes wrong.
 - The tray icon is drawn at runtime (no image assets) as a 32×32
@@ -163,9 +169,9 @@ for troubleshooting only.
 Requires Go 1.26+ (matching the `go` directive in `go.mod`).
 
 ```
-GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
-GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
-GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o Setup_StayWakeBlackScreenIdle.exe ./cmd/stay-wake-setup
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreen.exe ./cmd/staywakeblackscreen
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H=windowsgui -s -w" -o StayWakeBlackScreenIdle.exe ./cmd/staywakeblackscreenidle
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o Setup_StayWakeBlackScreenIdle.exe ./cmd/stay-wake-setup
 ```
 
 Run the tests with `go test ./...`. They cover the OS-independent parts
@@ -202,6 +208,7 @@ Package layout:
 internal/blackout/       Win32 bindings: sleep/display block, input
                           hooks, overlay windows, DPI, idle detection
 internal/tray/            Notification-area icon, menu, drawn icon
+internal/win32/           Win32 declarations shared by blackout and tray
 internal/monitoricon/     The monitor glyph's geometry, shared by the
                           tray icon and the generated .exe file icon
 internal/singleinstance/  Named-mutex single-instance guard

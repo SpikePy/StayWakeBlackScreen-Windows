@@ -8,11 +8,10 @@
 package setup
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,7 +109,7 @@ func Install(opts InstallOptions) error {
 	fmt.Printf("Downloading %s (%s)...\n", rel.TagName, downloadURL)
 
 	tmpPath := targetPath + ".download"
-	if err := downloadFile(downloadURL, opts.GitHubToken, tmpPath); err != nil {
+	if err := downloadFile(downloadURL, tmpPath); err != nil {
 		return fmt.Errorf("downloading asset: %w", err)
 	}
 
@@ -182,66 +181,39 @@ func Uninstall(opts UninstallOptions) error {
 	return nil
 }
 
-// newGitHubRequest builds a GET request carrying the headers every GitHub
-// call here needs, plus the optional auth token.
-func newGitHubRequest(url, token string) (*http.Request, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	return req, nil
-}
-
+// latestRelease looks up the newest release through the GitHub API. The
+// token, if any, is only ever sent here: it's what the API rate limit
+// applies to, and the asset download itself needs no authentication.
 func latestRelease(token string) (*ghRelease, error) {
+	headers := []string{"Accept: application/vnd.github+json"}
+	if token != "" {
+		headers = append(headers, "Authorization: Bearer "+token)
+	}
+	var body bytes.Buffer
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
-	req, err := newGitHubRequest(url, token)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("GitHub API returned %s: %s", resp.Status, string(body))
+	if err := httpGet(url, headers, &body); err != nil {
+		return nil, fmt.Errorf("GitHub API: %w", err)
 	}
 	var rel ghRelease
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+	if err := json.Unmarshal(body.Bytes(), &rel); err != nil {
 		return nil, err
 	}
 	return &rel, nil
 }
 
-func downloadFile(url, token, destPath string) error {
-	req, err := newGitHubRequest(url, token)
-	if err != nil {
-		return err
-	}
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download returned %s", resp.Status)
-	}
-
+// downloadFile saves url's content to destPath, removing the file again
+// if the download fails partway.
+func downloadFile(url, destPath string) error {
 	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, resp.Body)
-	return err
+	if err := httpGet(url, nil, out); err != nil {
+		out.Close()
+		os.Remove(destPath)
+		return err
+	}
+	return out.Close()
 }
 
 // replaceFile moves tmpPath onto targetPath, retrying briefly: the target

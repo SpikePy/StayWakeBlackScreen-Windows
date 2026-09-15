@@ -36,35 +36,28 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"runtime"
 
 	"windows-stay-wake-black-screen/internal/applog"
 	"windows-stay-wake-black-screen/internal/blackout"
 	"windows-stay-wake-black-screen/internal/config"
 	"windows-stay-wake-black-screen/internal/singleinstance"
-	"windows-stay-wake-black-screen/internal/tray"
 )
 
 // version is stamped in at build time via -ldflags "-X main.version=...";
 // left as "dev" for local/manual builds.
 var version = "dev"
 
-const (
-	menuIDEnable    = 1
-	menuIDDisable   = 2
-	menuIDConfigure = 3
-	menuIDExit      = 4
-)
-
 func main() {
+	// Win32 hooks, timers and the message queue are bound to the OS thread
+	// that creates them; the Go runtime must never migrate this goroutine
+	// to a different one mid-run.
 	runtime.LockOSThread()
 
 	cfg, cfgErr := config.Load()
 
 	idleMinutes := flag.Int("idle-minutes", cfg.IdleMinutes, "minutes of inactivity before blacking out (overrides config.yaml)")
 	heartbeatSeconds := flag.Int("heartbeat-seconds", cfg.HeartbeatSeconds, "seconds between Caps Lock activity heartbeats while blacked out (overrides config.yaml)")
-	pollMs := flag.Int("poll-ms", cfg.PollMs, "milliseconds between idle/escape polls (overrides config.yaml)")
 	startEnabled := flag.Bool("start-enabled", cfg.StartEnabled, "whether the idle guard is active on launch (overrides config.yaml)")
 	enableLogging := flag.Bool("enable-logging", false, "write diagnostics to StayWakeBlackScreenIdle.log next to the exe")
 	flag.Parse()
@@ -85,41 +78,11 @@ func main() {
 	}
 	defer release()
 
-	var (
-		overlayWindows []uintptr
-		heartbeatTimer uintptr // 0 when not blacked out
-		fastTimer      uintptr
-		cursorHidden   bool
-		inputBlocked   bool
-		blackedOut     bool
-		enabled        = *startEnabled
-
-		trayHwnd uintptr
-		trayIcon uintptr
-	)
-
-	cleanup := func() {
-		if inputBlocked {
-			blackout.RemoveInputBlockHooks()
-		}
-		if cursorHidden {
-			blackout.ShowCursorAgain()
-		}
-		blackout.StopTimer(heartbeatTimer)
-		blackout.StopTimer(fastTimer)
-		for _, h := range overlayWindows {
-			blackout.DestroyOverlayWindow(h)
-		}
-		blackout.RestoreExecutionState()
-		if blackout.IsCapsLockOn() {
-			blackout.ToggleCapsLock()
-		}
-		tray.RemoveIcon(trayHwnd)
-		tray.DestroyIconHandle(trayIcon)
-		tray.DestroyWindow(trayHwnd)
+	g := newGuard(logf, blackout.IdleThresholdMs(*idleMinutes), blackout.HeartbeatMs(*heartbeatSeconds), *startEnabled)
+	defer func() {
+		g.cleanup()
 		logf("Cleanup done. Log at: %s", logPath)
-	}
-	defer cleanup()
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			logf("PANIC: %v", r)
@@ -132,216 +95,20 @@ func main() {
 	// blackout), so it never sees a display-off/idle transition that
 	// could trigger a session lock.
 	blackout.BlockSleep()
-	if !enabled {
+	if !g.enabled {
 		logf("Starting disabled (start_enabled=false)")
 		blackout.RestoreExecutionState()
 	}
 
-	enterBlackout := func() error {
-		logf("Idle timeout reached - entering blackout")
-		monitors, err := blackout.Monitors()
-		if err != nil || len(monitors) == 0 {
-			return fmt.Errorf("enumerating monitors: %w", err)
-		}
-		for _, m := range monitors {
-			hwnd, err := blackout.CreateOverlayWindow(m)
-			if err != nil {
-				return fmt.Errorf("creating overlay window for %+v: %w", m, err)
-			}
-			overlayWindows = append(overlayWindows, hwnd)
-		}
-		for _, h := range overlayWindows {
-			blackout.ShowOverlayWindow(h)
-		}
-		if len(overlayWindows) > 0 {
-			blackout.FocusWindow(overlayWindows[0])
-		}
-		blackout.HideCursor()
-		cursorHidden = true
-
-		if err := blackout.InstallInputBlockHooks(); err != nil {
-			return fmt.Errorf("installing input hooks: %w", err)
-		}
-		inputBlocked = true
-
-		heartbeatTimer, err = blackout.StartTimer(blackout.HeartbeatMs(*heartbeatSeconds))
-		if err != nil {
-			return fmt.Errorf("starting heartbeat timer: %w", err)
-		}
-		blackedOut = true
-		return nil
-	}
-
-	var lastActivityTick int32
-
-	exitBlackout := func() {
-		logf("Exiting blackout, resuming idle watch")
-		if inputBlocked {
-			blackout.RemoveInputBlockHooks()
-			inputBlocked = false
-		}
-		blackout.StopTimer(heartbeatTimer)
-		heartbeatTimer = 0
-		if blackout.IsCapsLockOn() {
-			blackout.ToggleCapsLock()
-		}
-		if cursorHidden {
-			blackout.ShowCursorAgain()
-			cursorHidden = false
-		}
-		for _, h := range overlayWindows {
-			blackout.DestroyOverlayWindow(h)
-		}
-		overlayWindows = nil
-		// Restart the idle countdown fresh from now, rather than trusting
-		// GetLastInputTick(): real input was swallowed by our own hooks
-		// for the duration of the blackout, so the OS-reported value is
-		// stale and would otherwise cause an immediate re-trigger.
-		lastActivityTick = int32(blackout.GetTickCount())
-		blackedOut = false
-	}
-
-	applyTrayIcon := func() {
-		var (
-			newIcon uintptr
-			err     error
-		)
-		if enabled {
-			newIcon, err = tray.EnabledIcon()
-		} else {
-			newIcon, err = tray.DisabledIcon()
-		}
-		if err != nil {
-			logf("EXCEPTION building tray icon: %v", err)
-			return
-		}
-		tooltip := fmt.Sprintf("StayWakeBlackScreenIdle %s - guarding", version)
-		if !enabled {
-			tooltip = fmt.Sprintf("StayWakeBlackScreenIdle %s - disabled", version)
-		}
-		if trayIcon == 0 {
-			if err := tray.AddIcon(trayHwnd, newIcon, tooltip); err != nil {
-				logf("EXCEPTION adding tray icon: %v", err)
-			}
-		} else {
-			if err := tray.UpdateIcon(trayHwnd, newIcon, tooltip); err != nil {
-				logf("EXCEPTION updating tray icon: %v", err)
-			}
-		}
-		old := trayIcon
-		trayIcon = newIcon
-		tray.DestroyIconHandle(old)
-	}
-
-	setEnabled := func(v bool) {
-		if enabled == v {
-			return
-		}
-		enabled = v
-		if enabled {
-			logf("Enabled via tray")
-			blackout.BlockSleep()
-			// Avoid an immediate re-trigger from idle time that
-			// accumulated while disabled.
-			lastActivityTick = int32(blackout.GetTickCount())
-		} else {
-			logf("Disabled via tray")
-			if blackedOut {
-				exitBlackout()
-			}
-			blackout.RestoreExecutionState()
-		}
-		applyTrayIcon()
-	}
-
-	openConfigFile := func() {
-		path, err := config.Path()
-		if err != nil {
-			logf("EXCEPTION resolving config.yaml path: %v", err)
-			return
-		}
-		if err := blackout.OpenFile(path); err != nil {
-			logf("EXCEPTION opening config.yaml: %v", err)
-		}
-	}
-
-	trayHwnd, err = tray.NewWindow(
-		func() { setEnabled(!enabled) }, // left click: toggle
-		func() { // right click: menu
-			id := tray.ShowMenu(trayHwnd, []tray.MenuItem{
-				{ID: menuIDEnable, Label: "Enable", Checked: enabled},
-				{ID: menuIDDisable, Label: "Disable", Checked: !enabled},
-				{},
-				{ID: menuIDConfigure, Label: "Configure"},
-				{},
-				{ID: menuIDExit, Label: "Exit"},
-			})
-			switch id {
-			case menuIDEnable:
-				setEnabled(true)
-			case menuIDDisable:
-				setEnabled(false)
-			case menuIDConfigure:
-				openConfigFile()
-			case menuIDExit:
-				blackout.PostQuitMessage()
-			}
-		},
-	)
-	if err != nil {
-		logf("EXCEPTION creating tray window: %v", err)
-		return
-	}
-	applyTrayIcon()
-
-	idleThresholdMs := blackout.IdleThresholdMs(*idleMinutes)
-
-	lastActivityTick = int32(blackout.GetTickCount())
-
-	fastTimer, err = blackout.StartTimer(blackout.PollMs(*pollMs))
-	if err != nil {
-		logf("EXCEPTION starting poll timer: %v", err)
+	if err := g.start(); err != nil {
+		logf("EXCEPTION %v", err)
 		return
 	}
 
 	logf("Entering message loop (background idle guard, idleMinutes=%d)", *idleMinutes)
-	for {
-		m, ok := blackout.GetMessage()
-		if !ok {
-			break
-		}
-		if m.Hwnd != 0 || m.Message != blackout.WMTimer {
-			blackout.Dispatch(m)
-			continue
-		}
-
-		switch m.WParam {
-		case fastTimer:
-			if !enabled {
-				continue
-			}
-			if blackedOut {
-				if blackout.TakeEscapeRequested() {
-					exitBlackout()
-				}
-				continue
-			}
-			osLast := int32(blackout.GetLastInputTick())
-			if osLast-lastActivityTick > 0 {
-				lastActivityTick = osLast
-			}
-			idleMs := int32(blackout.GetTickCount()) - lastActivityTick
-			if idleMs >= idleThresholdMs {
-				if err := enterBlackout(); err != nil {
-					logf("EXCEPTION entering blackout: %v", err)
-					return
-				}
-			}
-		case heartbeatTimer:
-			if blackedOut {
-				blackout.PulseCapsLock()
-			}
-		}
+	if err := g.run(); err != nil {
+		logf("EXCEPTION %v", err)
+		return
 	}
 	logf("Message loop returned (Exit or unexpected shutdown).")
 }

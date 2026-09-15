@@ -6,20 +6,15 @@ import "math"
 // accepts (~24.8 days).
 const MaxTimerMs = 0x7FFFFFFF
 
-// The helpers below turn user-supplied intervals (flags or config.yaml)
-// into safe values. They clamp before converting to a fixed-width int: a
-// negative input would otherwise wrap to a huge uint32 and effectively
-// disable the timer, and an oversized one would overflow.
+// The helpers below turn user-supplied values (flags or config.yaml) into
+// safe ones. They clamp before converting to a fixed-width int: a negative
+// input would otherwise wrap to a huge value and effectively disable the
+// feature, and an oversized one would overflow.
 
 // HeartbeatMs converts a heartbeat interval in seconds to a StartTimer
 // interval, clamped to [1s, MaxTimerMs].
 func HeartbeatMs(seconds int) uint32 {
 	return uint32(min(max(seconds, 1), MaxTimerMs/1000) * 1000)
-}
-
-// PollMs clamps an idle/Escape poll interval to [50ms, MaxTimerMs].
-func PollMs(ms int) uint32 {
-	return uint32(min(max(ms, 50), MaxTimerMs))
 }
 
 // IdleThresholdMs converts an idle timeout in minutes to milliseconds,

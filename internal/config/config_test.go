@@ -35,7 +35,7 @@ func TestLoadCreatesDefaultFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default config.yaml was not created: %v", err)
 	}
-	for _, line := range []string{"idle_minutes: 3", "heartbeat_seconds: 5", "poll_ms: 250", "start_enabled: true"} {
+	for _, line := range []string{"idle_minutes: 3", "heartbeat_seconds: 5", "start_enabled: true"} {
 		if !strings.Contains(string(data), line) {
 			t.Errorf("created config.yaml is missing %q", line)
 		}
@@ -56,17 +56,22 @@ func TestLoad(t *testing.T) {
 		{
 			name: "file predating newer fields keeps their defaults",
 			yaml: "idle_minutes: 7\n",
-			want: Config{IdleMinutes: 7, HeartbeatSeconds: 5, PollMs: 250, StartEnabled: true},
+			want: Config{IdleMinutes: 7, HeartbeatSeconds: 5, StartEnabled: true},
 		},
 		{
 			name: "every field overridden",
-			yaml: "idle_minutes: 10\nheartbeat_seconds: 2\npoll_ms: 500\nstart_enabled: false\n",
-			want: Config{IdleMinutes: 10, HeartbeatSeconds: 2, PollMs: 500, StartEnabled: false},
+			yaml: "idle_minutes: 10\nheartbeat_seconds: 2\nstart_enabled: false\n",
+			want: Config{IdleMinutes: 10, HeartbeatSeconds: 2, StartEnabled: false},
 		},
 		{
 			name: "invalid values fall back per field",
-			yaml: "idle_minutes: -1\nheartbeat_seconds: 0\npoll_ms: -5\nstart_enabled: false\n",
-			want: Config{IdleMinutes: 3, HeartbeatSeconds: 5, PollMs: 250, StartEnabled: false},
+			yaml: "idle_minutes: -1\nheartbeat_seconds: 0\nstart_enabled: false\n",
+			want: Config{IdleMinutes: 3, HeartbeatSeconds: 5, StartEnabled: false},
+		},
+		{
+			name: "poll_ms from older versions is ignored",
+			yaml: "idle_minutes: 4\npoll_ms: 100\n",
+			want: Config{IdleMinutes: 4, HeartbeatSeconds: 5, StartEnabled: true},
 		},
 	}
 	for _, tt := range tests {

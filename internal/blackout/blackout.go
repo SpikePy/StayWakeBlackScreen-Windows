@@ -5,12 +5,12 @@ package blackout
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"syscall"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"windows-stay-wake-black-screen/internal/win32"
 )
 
 // Rect is a monitor's or window's bounds in physical (DPI-aware) pixels.
@@ -26,17 +26,13 @@ type Msg struct {
 	LParam  uintptr
 }
 
-const windowClassName = "StayWakeBlackoutWindow"
+const overlayClassName = "StayWakeBlackoutWindow"
 
 var (
 	classOnce sync.Once
 	classErr  error
-	hInstance syscall.Handle
 
-	wndProcCB = syscall.NewCallback(func(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
-		r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(message), wParam, lParam)
-		return r
-	})
+	overlayWndProcCB = syscall.NewCallback(win32.DefWindowProc)
 )
 
 // EnableDPIAwareness must be called before any monitor bounds or window are
@@ -83,23 +79,28 @@ func OpenFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("encoding path: %w", err)
 	}
-	if err := windows.ShellExecute(0, utf16Ptr("open"), file, nil, nil, swShow); err != nil {
+	if err := windows.ShellExecute(0, win32.UTF16Ptr("open"), file, nil, nil, swShow); err != nil {
 		return fmt.Errorf("ShellExecuteW: %w", err)
 	}
 	return nil
 }
 
-var escapeRequested atomic.Bool
+var (
+	keyboardHookHandle uintptr
+	mouseHookHandle    uintptr
 
-// InstallInputBlockHooks installs system-wide low-level keyboard and mouse
+	keyboardHookCB = syscall.NewCallback(keyboardHookProc)
+	mouseHookCB    = syscall.NewCallback(mouseHookProc)
+)
+
+// installInputBlockHooks installs system-wide low-level keyboard and mouse
 // hooks that swallow every event - nothing reaches any window, including
 // this process's own. Only Escape is special-cased: it still isn't
-// delivered anywhere, but it sets a flag pollable via TakeEscapeRequested.
+// delivered anywhere, but it posts WMEscapePressed to this thread.
 // Windows never lets any hook suppress Ctrl+Alt+Del, so that combination
 // always remains a hard escape hatch regardless of anything going wrong.
-func InstallInputBlockHooks() error {
-	escapeRequested.Store(false)
-	hMod := getModuleHandle()
+func installInputBlockHooks() error {
+	hMod := win32.ModuleHandle()
 
 	kh, _, e1 := procSetWindowsHookExW.Call(uintptr(whKeyboardLL), keyboardHookCB, uintptr(hMod), 0)
 	if kh == 0 {
@@ -117,9 +118,9 @@ func InstallInputBlockHooks() error {
 	return nil
 }
 
-// RemoveInputBlockHooks removes both hooks, if installed. Safe to call more
-// than once.
-func RemoveInputBlockHooks() {
+// removeInputBlockHooks removes both hooks, if installed. Safe to call
+// more than once.
+func removeInputBlockHooks() {
 	if keyboardHookHandle != 0 {
 		procUnhookWindowsHookEx.Call(keyboardHookHandle)
 		keyboardHookHandle = 0
@@ -129,21 +130,6 @@ func RemoveInputBlockHooks() {
 		mouseHookHandle = 0
 	}
 }
-
-// TakeEscapeRequested reports whether Escape was pressed since the hooks
-// were installed or since the last call to TakeEscapeRequested, and clears
-// the flag.
-func TakeEscapeRequested() bool {
-	return escapeRequested.Swap(false)
-}
-
-var (
-	keyboardHookHandle uintptr
-	mouseHookHandle    uintptr
-
-	keyboardHookCB = syscall.NewCallback(keyboardHookProc)
-	mouseHookCB    = syscall.NewCallback(mouseHookProc)
-)
 
 func keyboardHookProc(nCode int32, wParam, lParam uintptr) uintptr {
 	if nCode < 0 {
@@ -157,13 +143,14 @@ func keyboardHookProc(nCode int32, wParam, lParam uintptr) uintptr {
 		r, _, _ := procCallNextHookEx.Call(keyboardHookHandle, uintptr(nCode), wParam, lParam)
 		return r
 	}
-	if wParam == wmKeydown || wParam == wmSyskeydown {
-		if data.VkCode == vkEscape {
-			escapeRequested.Store(true)
-		}
+	if (wParam == wmKeydown || wParam == wmSyskeydown) && data.VkCode == vkEscape {
+		// Low-level hooks run on the thread that installed them, so this
+		// lands in that thread's own queue and wakes its message loop
+		// right away - nothing has to poll for it.
+		win32.PostMessage(0, WMEscapePressed, 0, 0)
 	}
-	// Swallow every other key: do not call CallNextHookEx, so nothing -
-	// not even our own window - ever receives this input.
+	// Swallow the key, Escape included: do not call CallNextHookEx, so
+	// nothing - not even our own window - ever receives this input.
 	return 1
 }
 
@@ -182,14 +169,6 @@ func ToggleCapsLock() {
 	marker := uintptr(ownInjectedMarker)
 	procKeybdEvent.Call(uintptr(vkCapital), 0x45, 0, marker)
 	procKeybdEvent.Call(uintptr(vkCapital), 0x45, uintptr(keyeventfKeyup), marker)
-}
-
-// PulseCapsLock toggles Caps Lock and, 150ms later, back again: one
-// activity heartbeat that leaves the Caps Lock state as it found it.
-func PulseCapsLock() {
-	ToggleCapsLock()
-	time.Sleep(150 * time.Millisecond)
-	ToggleCapsLock()
 }
 
 // IsCapsLockOn reports the current Caps Lock toggle state.
@@ -232,10 +211,9 @@ var monitorEnumCB = syscall.NewCallback(func(hMonitor, _hdcMonitor uintptr, _lpr
 	return 1
 })
 
-// Monitors returns the full bounds (not just the work area) of every
-// display, matching .NET's Screen.AllScreens / Screen.Bounds - so overlay
-// windows cover the entire screen, not just the area outside the taskbar.
-func Monitors() ([]Rect, error) {
+// monitors returns the full bounds (not just the work area) of every
+// display, so overlay windows cover the entire screen, taskbar included.
+func monitors() ([]Rect, error) {
 	monitorsMu.Lock()
 	defer monitorsMu.Unlock()
 	monitorsResult = nil
@@ -250,62 +228,21 @@ func Monitors() ([]Rect, error) {
 
 func ensureClass() error {
 	classOnce.Do(func() {
-		hInstance = getModuleHandle()
 		brush, _, _ := procCreateSolidBrush.Call(0) // RGB(0,0,0) = black
-		wc := wndClassExW{
-			lpfnWndProc:   wndProcCB,
-			hInstance:     hInstance,
-			hbrBackground: syscall.Handle(brush),
-			lpszClassName: utf16Ptr(windowClassName),
-		}
-		wc.cbSize = uint32(unsafe.Sizeof(wc))
-		r, _, e := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
-		if r == 0 {
-			classErr = e
-		}
+		classErr = win32.RegisterClass(overlayClassName, overlayWndProcCB, syscall.Handle(brush))
 	})
 	return classErr
 }
 
-// CreateOverlayWindow creates (but does not show) a borderless, topmost,
-// black, cursor-less, taskbar-hidden window covering r.
-func CreateOverlayWindow(r Rect) (uintptr, error) {
+// createOverlayWindow creates (but does not show) a borderless, topmost,
+// black, taskbar-hidden window covering r.
+func createOverlayWindow(r Rect) (uintptr, error) {
 	if err := ensureClass(); err != nil {
 		return 0, err
 	}
-	hwnd, _, e := procCreateWindowExW.Call(
-		uintptr(wsExTopmost|wsExToolWindow),
-		uintptr(unsafe.Pointer(utf16Ptr(windowClassName))),
-		uintptr(unsafe.Pointer(utf16Ptr(""))),
-		uintptr(wsPopup),
-		iptr(r.Left), iptr(r.Top), iptr(r.Right-r.Left), iptr(r.Bottom-r.Top),
-		0, 0, uintptr(hInstance), 0,
-	)
-	if hwnd == 0 {
-		return 0, e
-	}
-	return hwnd, nil
+	return win32.CreateWindow(wsExTopmost|wsExToolWindow, wsPopup, overlayClassName, "",
+		r.Left, r.Top, r.Right-r.Left, r.Bottom-r.Top)
 }
-
-// ShowOverlayWindow shows a window created by CreateOverlayWindow.
-func ShowOverlayWindow(hwnd uintptr) { procShowWindow.Call(hwnd, swShow) }
-
-// DestroyOverlayWindow destroys a window created by CreateOverlayWindow.
-// Safe to call on a zero handle.
-func DestroyOverlayWindow(hwnd uintptr) {
-	if hwnd != 0 {
-		procDestroyWindow.Call(hwnd)
-	}
-}
-
-// FocusWindow brings hwnd to the foreground.
-func FocusWindow(hwnd uintptr) { procSetForegroundWindow.Call(hwnd) }
-
-// HideCursor hides the system cursor (one-shot, mirrors Cursor.Hide()).
-func HideCursor() { procShowCursor.Call(0) }
-
-// ShowCursorAgain restores the system cursor hidden by HideCursor.
-func ShowCursorAgain() { procShowCursor.Call(1) }
 
 // StartTimer creates a message-only timer (delivered as WM_TIMER with Hwnd
 // 0) and returns its system-assigned id, to be passed to StopTimer and

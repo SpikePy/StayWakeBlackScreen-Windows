@@ -10,26 +10,20 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"windows-stay-wake-black-screen/internal/win32"
 )
 
 var (
-	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
-	modUser32   = windows.NewLazySystemDLL("user32.dll")
-	modShell32  = windows.NewLazySystemDLL("shell32.dll")
+	modUser32  = windows.NewLazySystemDLL("user32.dll")
+	modShell32 = windows.NewLazySystemDLL("shell32.dll")
 
-	procGetModuleHandleW = modKernel32.NewProc("GetModuleHandleW")
-
-	procRegisterClassExW    = modUser32.NewProc("RegisterClassExW")
-	procCreateWindowExW     = modUser32.NewProc("CreateWindowExW")
-	procDefWindowProcW      = modUser32.NewProc("DefWindowProcW")
-	procDestroyWindow       = modUser32.NewProc("DestroyWindow")
-	procGetCursorPos        = modUser32.NewProc("GetCursorPos")
-	procSetForegroundWindow = modUser32.NewProc("SetForegroundWindow")
-	procCreatePopupMenu     = modUser32.NewProc("CreatePopupMenu")
-	procDestroyMenu         = modUser32.NewProc("DestroyMenu")
-	procAppendMenuW         = modUser32.NewProc("AppendMenuW")
-	procTrackPopupMenuEx    = modUser32.NewProc("TrackPopupMenuEx")
-	procPostMessageW        = modUser32.NewProc("PostMessageW")
+	procGetCursorPos           = modUser32.NewProc("GetCursorPos")
+	procCreatePopupMenu        = modUser32.NewProc("CreatePopupMenu")
+	procDestroyMenu            = modUser32.NewProc("DestroyMenu")
+	procAppendMenuW            = modUser32.NewProc("AppendMenuW")
+	procTrackPopupMenuEx       = modUser32.NewProc("TrackPopupMenuEx")
+	procRegisterWindowMessageW = modUser32.NewProc("RegisterWindowMessageW")
 
 	procShellNotifyIconW = modShell32.NewProc("Shell_NotifyIconW")
 )
@@ -40,9 +34,6 @@ const (
 	wmNull      = 0x0000
 	wmLButtonUp = 0x0202
 	wmRButtonUp = 0x0205
-
-	wmApp          = 0x8000
-	wmTrayCallback = wmApp + 1
 
 	nimAdd    = 0
 	nimModify = 1
@@ -60,14 +51,6 @@ const (
 	tpmReturnCmd   = 0x0100
 	tpmNoAnimation = 0x4000
 )
-
-// CW_USEDEFAULT as a signed 32-bit value, converted to uintptr via int64 so
-// the two's-complement bit pattern is preserved. Built from a variable
-// (not a constant expression) so the conversion happens at runtime -
-// converting the negative literal directly would trip uintptr's
-// compile-time "constant overflows" check.
-var cwUseDefaultI32 int32 = -2147483648
-var cwUseDefault = uintptr(int64(cwUseDefaultI32))
 
 type guid struct {
 	Data1 uint32
@@ -94,34 +77,33 @@ type notifyIconDataW struct {
 	hBalloonIcon      uintptr
 }
 
-type wndClassExW struct {
-	cbSize        uint32
-	style         uint32
-	lpfnWndProc   uintptr
-	cbClsExtra    int32
-	cbWndExtra    int32
-	hInstance     syscall.Handle
-	hIcon         syscall.Handle
-	hCursor       syscall.Handle
-	hbrBackground syscall.Handle
-	lpszMenuName  *uint16
-	lpszClassName *uint16
-	hIconSm       syscall.Handle
-}
-
 type point struct{ X, Y int32 }
 
 const trayWindowClassName = "StayWakeTrayHiddenWindow"
 
+// Everything below is only touched on the thread that created the tray
+// window and runs its message loop (NewWindow, SetIcon, RemoveIcon, and
+// wndProcCB, which that loop dispatches), so no locking is needed.
 var (
-	// Set once by NewWindow before its window exists, and only read by
-	// wndProcCB, which the message loop runs on that same locked OS
-	// thread - so no locking is needed.
 	onLeftClick  func()
 	onRightClick func()
 
+	// taskbarCreated is the "TaskbarCreated" message Explorer broadcasts
+	// whenever it (re)starts. By then every tray icon it showed is gone,
+	// and each app has to add its own back.
+	taskbarCreated uint32
+
+	// shown is the icon SetIcon was last asked to show, kept so it can be
+	// re-added after an Explorer restart.
+	shown struct {
+		hwnd, hIcon uintptr
+		tooltip     string
+		added       bool
+	}
+
 	wndProcCB = syscall.NewCallback(func(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
-		if message == wmTrayCallback && (lParam == wmLButtonUp || lParam == wmRButtonUp) {
+		switch {
+		case message == win32.WMTrayCallback && (lParam == wmLButtonUp || lParam == wmRButtonUp):
 			cb := onLeftClick
 			if lParam == wmRButtonUp {
 				cb = onRightClick
@@ -130,19 +112,16 @@ var (
 				cb()
 			}
 			return 0
+		case taskbarCreated != 0 && message == taskbarCreated:
+			if shown.hwnd != 0 {
+				shown.added = false
+				SetIcon(shown.hwnd, shown.hIcon, shown.tooltip) // nobody to report a failure to; the next SetIcon retries
+			}
+			return 0
 		}
-		r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(message), wParam, lParam)
-		return r
+		return win32.DefWindowProc(hwnd, message, wParam, lParam)
 	})
 )
-
-func utf16Ptr(s string) *uint16 {
-	p, err := windows.UTF16PtrFromString(s)
-	if err != nil {
-		panic(err)
-	}
-	return p
-}
 
 // NewWindow creates a hidden window that owns the tray icon and any popup
 // menu, and wires left/right click callbacks. It must be created on, and
@@ -150,47 +129,24 @@ func utf16Ptr(s string) *uint16 {
 // program (see runtime.LockOSThread in main).
 func NewWindow(left, right func()) (uintptr, error) {
 	onLeftClick, onRightClick = left, right
-
-	hInstance := getModuleHandle()
-
-	wc := wndClassExW{
-		lpfnWndProc:   wndProcCB,
-		hInstance:     hInstance,
-		lpszClassName: utf16Ptr(trayWindowClassName),
-	}
-	wc.cbSize = uint32(unsafe.Sizeof(wc))
-	if r, _, e := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
-		return 0, fmt.Errorf("RegisterClassExW: %w", e)
+	if r, _, _ := procRegisterWindowMessageW.Call(uintptr(unsafe.Pointer(win32.UTF16Ptr("TaskbarCreated")))); r != 0 {
+		taskbarCreated = uint32(r)
 	}
 
-	hwnd, _, e := procCreateWindowExW.Call(
-		0,
-		uintptr(unsafe.Pointer(utf16Ptr(trayWindowClassName))),
-		uintptr(unsafe.Pointer(utf16Ptr("StayWakeBlackScreenIdle"))),
-		uintptr(wsOverlappedWindow),
-		cwUseDefault, cwUseDefault, cwUseDefault, cwUseDefault,
-		0, 0, uintptr(hInstance), 0,
-	)
-	if hwnd == 0 {
-		return 0, fmt.Errorf("CreateWindowExW: %w", e)
+	if err := win32.RegisterClass(trayWindowClassName, wndProcCB, 0); err != nil {
+		return 0, err
 	}
 	// Deliberately never shown (no ShowWindow call) - it exists only to
-	// own the notify icon and receive its callback messages.
-	return hwnd, nil
+	// own the notify icon and receive its callback messages. It must stay
+	// a normal top-level window, not a message-only one, to receive the
+	// TaskbarCreated broadcast.
+	return win32.CreateWindow(0, wsOverlappedWindow, trayWindowClassName, "StayWakeBlackScreenIdle",
+		win32.CWUseDefault, win32.CWUseDefault, win32.CWUseDefault, win32.CWUseDefault)
 }
 
 // DestroyWindow destroys a window created by NewWindow. Safe to call on a
 // zero handle.
-func DestroyWindow(hwnd uintptr) {
-	if hwnd != 0 {
-		procDestroyWindow.Call(hwnd)
-	}
-}
-
-func getModuleHandle() syscall.Handle {
-	r, _, _ := procGetModuleHandleW.Call(0)
-	return syscall.Handle(r)
-}
+func DestroyWindow(hwnd uintptr) { win32.DestroyWindow(hwnd) }
 
 func newNotifyIconData(hwnd, hIcon uintptr, tooltip string) notifyIconDataW {
 	var nid notifyIconDataW
@@ -198,7 +154,7 @@ func newNotifyIconData(hwnd, hIcon uintptr, tooltip string) notifyIconDataW {
 	nid.hWnd = hwnd
 	nid.uID = 1
 	nid.uFlags = nifMessage | nifIcon | nifTip
-	nid.uCallbackMessage = wmTrayCallback
+	nid.uCallbackMessage = win32.WMTrayCallback
 	nid.hIcon = hIcon
 	tip := windows.StringToUTF16(tooltip)
 	n := copy(nid.szTip[:], tip)
@@ -208,25 +164,30 @@ func newNotifyIconData(hwnd, hIcon uintptr, tooltip string) notifyIconDataW {
 	return nid
 }
 
-// AddIcon adds the tray icon. hwnd must come from NewWindow.
-func AddIcon(hwnd, hIcon uintptr, tooltip string) error {
+// SetIcon shows hIcon with tooltip as the tray icon of hwnd (from
+// NewWindow), adding it the first time and updating it after that. The
+// icon is remembered and re-added automatically whenever Explorer
+// restarts, so the caller must keep hIcon alive until it passes a new one.
+func SetIcon(hwnd, hIcon uintptr, tooltip string) error {
+	shown.hwnd, shown.hIcon, shown.tooltip = hwnd, hIcon, tooltip
 	nid := newNotifyIconData(hwnd, hIcon, tooltip)
+	if shown.added {
+		if r, _, _ := procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&nid))); r != 0 {
+			return nil
+		}
+		// The icon has gone missing (e.g. Explorer restarted and the
+		// broadcast was missed); add it afresh below.
+	}
 	if r, _, e := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&nid))); r == 0 {
+		shown.added = false
 		return fmt.Errorf("Shell_NotifyIconW(NIM_ADD): %w", e)
 	}
+	shown.added = true
 	return nil
 }
 
-// UpdateIcon changes the icon/tooltip of an already-added tray icon.
-func UpdateIcon(hwnd, hIcon uintptr, tooltip string) error {
-	nid := newNotifyIconData(hwnd, hIcon, tooltip)
-	if r, _, e := procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&nid))); r == 0 {
-		return fmt.Errorf("Shell_NotifyIconW(NIM_MODIFY): %w", e)
-	}
-	return nil
-}
-
-// RemoveIcon removes the tray icon. Safe to call on a zero hwnd.
+// RemoveIcon removes the tray icon and stops it from being re-added. Safe
+// to call on a zero hwnd.
 func RemoveIcon(hwnd uintptr) {
 	if hwnd == 0 {
 		return
@@ -236,6 +197,7 @@ func RemoveIcon(hwnd uintptr) {
 	nid.hWnd = hwnd
 	nid.uID = 1
 	procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
+	shown.hwnd, shown.hIcon, shown.tooltip, shown.added = 0, 0, "", false
 }
 
 // MenuItem is one entry in the popup menu shown by ShowMenu. ID 0 is
@@ -266,7 +228,7 @@ func ShowMenu(hwnd uintptr, items []MenuItem) uint32 {
 		if it.Checked {
 			flags |= mfChecked
 		}
-		procAppendMenuW.Call(hMenu, flags, uintptr(it.ID), uintptr(unsafe.Pointer(utf16Ptr(it.Label))))
+		procAppendMenuW.Call(hMenu, flags, uintptr(it.ID), uintptr(unsafe.Pointer(win32.UTF16Ptr(it.Label))))
 	}
 
 	var pt point
@@ -274,7 +236,7 @@ func ShowMenu(hwnd uintptr, items []MenuItem) uint32 {
 
 	// Required so the menu reliably closes when the user clicks away from
 	// it (documented Win32 tray-icon idiom).
-	procSetForegroundWindow.Call(hwnd)
+	win32.SetForegroundWindow(hwnd)
 
 	id, _, _ := procTrackPopupMenuEx.Call(
 		hMenu,
@@ -283,6 +245,6 @@ func ShowMenu(hwnd uintptr, items []MenuItem) uint32 {
 		hwnd, 0,
 	)
 
-	procPostMessageW.Call(hwnd, wmNull, 0, 0)
+	win32.PostMessage(hwnd, wmNull, 0, 0)
 	return uint32(id)
 }
