@@ -65,11 +65,14 @@ for that run only.
 notification area, with a **black screen** while actively guarding and a
 **light grey screen** while disabled.
 - **Left-click** toggles it on/off.
-- **Right-click** opens a menu: Enable, Disable, Exit.
+- **Right-click** opens a menu: Enable, Disable, Configure, Exit.
 
 Disabling immediately restores input (if blacked out) and lets Windows
 sleep/lock normally again, without stopping the process — re-enable any
-time from the same menu. Exit stops it for good.
+time from the same menu. **Configure** opens `config.yaml` in whatever
+application Windows has associated with `.yaml` files (Notepad by
+default), so you can change the settings above without a terminal. Exit
+stops it for good.
 
 This program does not exit on its own otherwise. To stop it: the tray
 menu's *Exit*, Task Manager/`taskkill`, or the installer (which does this

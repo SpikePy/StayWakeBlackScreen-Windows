@@ -14,7 +14,9 @@
 //
 // A tray icon (black screen = guarding, light grey screen = disabled) lets
 // the user pause/resume without stopping the process: left-click toggles
-// it, right-click opens an Enable/Disable/Exit menu.
+// it, right-click opens an Enable/Disable/Configure/Exit menu. Configure
+// opens config.yaml in whatever application Windows has associated with
+// .yaml files.
 //
 // This program does not exit on its own otherwise. To stop it: the tray
 // menu's Exit, Task Manager, taskkill, or the installer (which does this
@@ -47,9 +49,10 @@ import (
 )
 
 const (
-	menuIDEnable  = 1
-	menuIDDisable = 2
-	menuIDExit    = 3
+	menuIDEnable    = 1
+	menuIDDisable   = 2
+	menuIDConfigure = 3
+	menuIDExit      = 4
 )
 
 func main() {
@@ -267,12 +270,25 @@ func main() {
 		applyTrayIcon()
 	}
 
+	openConfigFile := func() {
+		path, err := config.Path()
+		if err != nil {
+			logf("EXCEPTION resolving config.yaml path: %v", err)
+			return
+		}
+		if err := blackout.OpenFile(path); err != nil {
+			logf("EXCEPTION opening config.yaml: %v", err)
+		}
+	}
+
 	trayHwnd, err = tray.NewWindow(
 		func() { setEnabled(!enabled) }, // left click: toggle
 		func() { // right click: menu
 			id := tray.ShowMenu(trayHwnd, []tray.MenuItem{
 				{ID: menuIDEnable, Label: "Enable", Checked: enabled},
 				{ID: menuIDDisable, Label: "Disable", Checked: !enabled},
+				{},
+				{ID: menuIDConfigure, Label: "Configure"},
 				{},
 				{ID: menuIDExit, Label: "Exit"},
 			})
@@ -281,6 +297,8 @@ func main() {
 				setEnabled(true)
 			case menuIDDisable:
 				setEnabled(false)
+			case menuIDConfigure:
+				openConfigFile()
 			case menuIDExit:
 				blackout.PostQuitMessage()
 			}

@@ -72,6 +72,27 @@ func RestoreExecutionState() {
 	procSetThreadExecutionState.Call(uintptr(esContinuous))
 }
 
+// OpenFile opens path with whatever application Windows has associated
+// with its extension (e.g. the default YAML editor for a .yaml file),
+// the same as double-clicking it in Explorer.
+func OpenFile(path string) error {
+	verb, err := syscall.UTF16PtrFromString("open")
+	if err != nil {
+		return fmt.Errorf("encoding verb: %w", err)
+	}
+	file, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return fmt.Errorf("encoding path: %w", err)
+	}
+	r, _, err := procShellExecuteW.Call(0, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(file)), 0, 0, swShow)
+	// ShellExecuteW returns a value > 32 on success; anything <= 32 is an
+	// error code, per its documented (if dated) HINSTANCE-shaped return.
+	if r <= 32 {
+		return fmt.Errorf("ShellExecuteW returned %d: %w", r, err)
+	}
+	return nil
+}
+
 var escapeRequested int32
 
 // InstallInputBlockHooks installs system-wide low-level keyboard and mouse

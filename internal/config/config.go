@@ -109,6 +109,16 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// Path returns the config.yaml path, creating its containing directory
+// if necessary. It does not create the file itself - see Load.
+func Path() (string, error) {
+	dir, err := userDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, fileName), nil
+}
+
 func userDir() (string, error) {
 	dir := os.Getenv("LOCALAPPDATA")
 	if dir == "" {
